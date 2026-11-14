@@ -19,7 +19,7 @@ from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import config as C
-from backend.audio import countin, modem
+from backend.audio import countin, melody, modem
 from backend.audio.synth import Synth
 from backend.contracts import AdviserPacket, AdviserState, Bar, Heard
 from backend.data import history_payload, load_bars, replay_range
@@ -42,6 +42,19 @@ def _iso(t: Any) -> str:
 
 def _db(x: float) -> float:
     return 10 ** (x / 20)
+
+
+class Ears:  # MELODY: both modems are always decoded, so Macs on different modems still hear each other
+    def __init__(self, channel: int) -> None:
+        self.decoders = [modem.Decoder(channel), melody.MelodyDecoder(channel)]
+
+    def feed(self, frames: np.ndarray, t0: float) -> list[Heard]:
+        return [h for d in self.decoders for h in d.feed(frames, t0)]
+
+    @property
+    def stats(self) -> dict:
+        return {"packets": sum(d.stats["packets"] for d in self.decoders),
+                "crc_fail": sum(d.stats["crc_fail"] for d in self.decoders)}
 
 
 class StandInAdviser:
@@ -103,8 +116,11 @@ class Mac:
     """One Mac's brain: clock → adviser → synth, packets in and out, UI messages (SPEC §4.7)."""
 
     def __init__(self, bars: list[Bar], channel: int, conductor: bool, dial: float | None = None,
-                 adviser_cls: type = Adviser) -> None:
+                 adviser_cls: type = Adviser, modem_mode: str = "pilot") -> None:
         self.bars, self.channel, self.conductor = bars, channel, conductor
+        self.modem = modem_mode  # MELODY: what we send, 'pilot' or 'melody'; UI-switchable
+        self.slot_t0: float | None = None  # MELODY: when the replay began (count-in), the shared time base for turns
+        self._slot_sent: dict[int, int] = {}
         self.first, self.last = replay_range(bars)
         self.adviser = adviser_cls(channel, C.START_DIALS[channel] if dial is None else dial)
         state = None
@@ -126,6 +142,10 @@ class Mac:
         if tick.reset:
             self.adviser.restore(self.warm)
             self.bar = self.first - 1
+        if tick.reset:
+            self.slot_t0 = None
+        elif tick.bars and self.slot_t0 is None:
+            self.slot_t0, self._slot_sent = now, {}
         for bar in tick.bars:  # in order, never skip
             self.state = self.adviser.on_bar(bar)
             self.bar = bar.i
@@ -137,6 +157,16 @@ class Mac:
     def next_packet(self) -> AdviserPacket:
         """Every Mac sends adviser packets only; the conductor's clock is the count-in (SPEC §9.4)."""
         return self.adviser.packet()
+
+    def melody_due(self, ch: int, now: float) -> bool:
+        """MELODY: is it channel `ch`'s turn (once per cycle, shortly after its slot opens)?"""
+        if self.modem != "melody" or self.slot_t0 is None:
+            return False
+        k, into = divmod(now - self.slot_t0, C.MELODY_SLOT_S)
+        if int(k) % 4 != ch or self._slot_sent.get(ch) == int(k) or into > 0.3:
+            return False
+        self._slot_sent[ch] = int(k)
+        return True
 
     def on_heard(self, heard: Heard, now: float) -> None:
         if isinstance(heard.packet, AdviserPacket):  # clock packets are no longer sent; ignore any heard
@@ -150,6 +180,11 @@ class Mac:
     # --- UI ---
     def handle(self, msg: dict) -> str | None:
         """Apply a UI message. Returns an error message if refused (§10.2)."""
+        if msg.get("type") == "modem":  # MELODY: any Mac may switch what it sends
+            if msg.get("mode") not in ("pilot", "melody"):
+                return "unknown modem"
+            self.modem = msg["mode"]
+            return None
         if not self.conductor:  # COUNT-IN: start, pause, reset and speed are conductor-only
             return "following the conductor; controls disabled"
         if msg.get("type") == "control":
@@ -177,7 +212,7 @@ class Mac:
     def state_message(self) -> dict:
         s, bar = self.state, max(self.bar, self.first)
         return {"type": "state", "bar": self.bar, "time": _iso(self.bars[bar].time), "speed": self.clock.speed_step,
-                "paused": self.paused, "clock": self.clock.status,
+                "paused": self.paused, "clock": self.clock.status, "modem": self.modem,
                 "adviser": {"channel": s.channel, "dial": round(s.dial, 3), "step": s.step, "chord": CHORDS[s.step],
                             "halfLifeHours": round(s.half_life_bars * C.BAR_MINUTES / 60, 2), "h": round(s.h, 4),
                             "score": round(s.score, 4), "pnlUnhedgedPct": round(s.pnl_unhedged_pct, 3),
@@ -190,10 +225,11 @@ class Mac:
 class LoopbackRoom:
     """Two Macs in one process (channel 0 conductor, channel 1 follower) joined through VirtualAir."""
 
-    def __init__(self, bars: list[Bar], snr_db: float, chord_gain_db: float, pilot_gain_db: float) -> None:
+    def __init__(self, bars: list[Bar], snr_db: float, chord_gain_db: float, pilot_gain_db: float,
+                 modem_mode: str = "pilot") -> None:
         from backend.mocks import VirtualAir
-        self.macs = [Mac(bars, 0, True), Mac(bars, 1, False)]
-        self.decoders = [modem.Decoder(m.channel) for m in self.macs]
+        self.macs = [Mac(bars, 0, True, modem_mode=modem_mode), Mac(bars, 1, False, modem_mode=modem_mode)]
+        self.decoders = [Ears(m.channel) for m in self.macs]
         self.detector = countin.CountInDetector()  # COUNT-IN: the follower listens; the conductor never does
         self.air = [VirtualAir(snr_db, tone_amplitude=_db(pilot_gain_db), seed=k) for k in range(2)]
         self.pilot: list[deque[np.ndarray]] = [deque(), deque()]
@@ -217,8 +253,10 @@ class LoopbackRoom:
             if mac.clock.take_count_in(sum(len(a) for a in self.pilot[k]) / C.SAMPLE_RATE):  # COUNT-IN: play the clicks
                 self.pilot[k].append(countin.clicks() * _db(C.COUNT_IN_GAIN_DB) / self.pilot_gain)
             mac.step(dt, self.t)
-            if not self.pilot[k]:
+            if mac.modem == "pilot" and not self.pilot[k]:
                 self.pilot[k].append(modem.encode(mac.next_packet()))
+            elif mac.melody_due(mac.channel, self.t):  # MELODY: our turn
+                self.pilot[k].append(melody.encode(mac.next_packet()) * _db(C.MELODY_GAIN_DB) / self.pilot_gain)
         n = int(round(dt * C.SAMPLE_RATE))
         outs = [m.synth.render(n).copy() * self.chord_gain + self._pilot_chunk(k, n) * self.pilot_gain
                 for k, m in enumerate(self.macs)]
@@ -232,10 +270,10 @@ class LoopbackRoom:
 
 
 def run_smoke(bars: list[Bar], snr_db: float = 0.0, chord_gain_db: float = C.CHORD_GAIN_DB,
-              pilot_gain_db: float = C.PILOT_GAIN_DB) -> bool:
+              pilot_gain_db: float = C.PILOT_GAIN_DB, modem_mode: str = "pilot") -> bool:
     """--loopback --smoke: count-in, then replay at the default speed until ≥200 bars and ≥3 packets decoded by each
     Mac (virtual time). The follower must have started within 1 bar of the conductor."""
-    room = LoopbackRoom(bars, snr_db, chord_gain_db, pilot_gain_db)
+    room = LoopbackRoom(bars, snr_db, chord_gain_db, pilot_gain_db, modem_mode)
     conductor, follower = room.macs
     dt = 1 / C.LOOP_HZ
     target_bars = min(SMOKE_BARS, conductor.last - conductor.first + 1)  # 2-hour bars: the replay is ~119 bars
@@ -329,7 +367,11 @@ def live_body(mac: Mac, engine: Any, extra: list[StandInAdviser]) -> Any:
         for adv in extra:  # the fake neighbour follows our bars with its fixed dial
             for bar in mac.bars[max(before + 1, lead_in) : mac.bar + 1]:
                 adv.on_bar(bar)
-        if engine.pending() == 0:
+        if mac.modem == "melody":  # MELODY: play our packet (and the fake neighbour's) in our turn
+            for ch, make in [(mac.channel, mac.next_packet)] + [(a.channel, a.packet) for a in extra]:
+                if mac.melody_due(ch, now):
+                    engine.send_melody(melody.encode(make()))
+        elif engine.pending() == 0:
             senders = [mac.next_packet] + [a.packet for a in extra]
             engine.send(modem.encode(senders[state["turn"] % len(senders)]()))
             state["turn"] += 1
@@ -345,6 +387,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--loopback", action="store_true")
     p.add_argument("--snr-db", type=float, default=0.0)
     p.add_argument("--smoke", action="store_true")
+    p.add_argument("--modem", choices=("pilot", "melody"), default="pilot", help="what to send first; switchable in the UI")
     p.add_argument("--chord-gain-db", type=float, default=C.CHORD_GAIN_DB)
     p.add_argument("--pilot-gain-db", type=float, default=C.PILOT_GAIN_DB)
     p.add_argument("--input-device")
@@ -360,14 +403,14 @@ def main(argv: list[str] | None = None) -> int:
     if a.smoke:
         if not a.loopback:
             p.error("--smoke needs --loopback")
-        ok = run_smoke(bars, a.snr_db, a.chord_gain_db, a.pilot_gain_db)
+        ok = run_smoke(bars, a.snr_db, a.chord_gain_db, a.pilot_gain_db, a.modem)
         log.info("smoke %s", "passed" if ok else "FAILED")
         return 0 if ok else 1
 
     import uvicorn
 
     if a.loopback:
-        room = LoopbackRoom(bars, a.snr_db, a.chord_gain_db, a.pilot_gain_db)
+        room = LoopbackRoom(bars, a.snr_db, a.chord_gain_db, a.pilot_gain_db, a.modem)
         mac = room.macs[0]  # the UI shows the conductor
         clock_state = {"last": time.monotonic()}
 
@@ -376,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
             room.step(min(now - clock_state["last"], 0.2)); clock_state["last"] = now
         app = create_app(mac, body)
     else:
-        mac = Mac(bars, a.channel, a.conductor, a.dial)
+        mac = Mac(bars, a.channel, a.conductor, a.dial, modem_mode=a.modem)
         extra: list[StandInAdviser] = []
         if a.fake_neighbour is not None:
             nb = StandInAdviser((a.channel + 1) % 4, a.fake_neighbour)
@@ -385,7 +428,7 @@ def main(argv: list[str] | None = None) -> int:
             extra.append(nb)
         from backend.audio.engine import Engine
         loop_ref: dict[str, asyncio.AbstractEventLoop] = {}
-        decoder = modem.Decoder(a.channel)
+        decoder = Ears(a.channel)
         detector = None if a.conductor else countin.CountInDetector()  # COUNT-IN: the conductor never listens
 
         def on_frames(block: np.ndarray, t: float) -> None:  # decoder thread

@@ -7,10 +7,11 @@ import numpy as np
 from backend import config as C
 
 _TONES = np.linspace(*C.COUNT_IN_BAND_HZ, 6)[1:-1]  # the click's four partials, inside the band
-_BINS = np.unique([round(f * C.FFT_N / C.SAMPLE_RATE) + d for f in _TONES for d in (-1, 0, 1)])
+_BINS = np.array([[round(f * C.FFT_N / C.SAMPLE_RATE) + d for d in (-1, 0, 1)] for f in _TONES])  # (4, 3)
 _WIN = np.hanning(C.FFT_N)
 _FLOOR_HOPS = round(C.COUNT_IN_FLOOR_S * C.SAMPLE_RATE / C.HOP)
 _RATIO = 10 ** (C.COUNT_IN_ONSET_DB / 10)
+_NEED = 3  # partials (of 4) that must rise together
 _GAP_HOPS = C.COUNT_IN_INTERVAL_S * C.SAMPLE_RATE / C.HOP
 _TOL_HOPS = C.COUNT_IN_TOL_S * C.SAMPLE_RATE / C.HOP
 _SPAN_HOPS = (C.COUNT_IN_CLICKS - 1) * _GAP_HOPS + _TOL_HOPS * (C.COUNT_IN_CLICKS - 1)
@@ -38,7 +39,7 @@ class CountInDetector:
 
     def __init__(self) -> None:
         self._buf = np.zeros(0, np.float32)
-        self._hist: deque[float] = deque(maxlen=_FLOOR_HOPS)
+        self._hist: deque[np.ndarray] = deque(maxlen=_FLOOR_HOPS)  # per-partial energy
         self._hop = 0  # hop counter: the time base
         self._above = False
         self._onsets: deque[int] = deque()
@@ -54,12 +55,12 @@ class CountInDetector:
         return lag
 
     def _hop_step(self, win: np.ndarray) -> bool:
-        e = float(np.sum(np.abs(np.fft.rfft(win * _WIN)[_BINS]) ** 2))  # only the click's own bins: the most noise-proof
+        e = np.sum(np.abs(np.fft.rfft(win * _WIN)[_BINS]) ** 2, axis=1)  # each of the click's partials: the most noise-proof
         self._hop += 1
         if len(self._hist) < _FLOOR_HOPS // 2:  # no floor yet
             self._hist.append(e)
             return False
-        above = e > np.median(self._hist) * _RATIO + 1e-9
+        above = (e > np.median(self._hist, axis=0) * _RATIO + 1e-9).sum() >= _NEED  # a click lights all partials, a melody note one
         self._hist.append(e)
         rising, self._above = above and not self._above, above
         if not rising:
