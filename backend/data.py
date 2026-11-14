@@ -39,3 +39,22 @@ def replay_range(bars: list[Bar]) -> tuple[int, int]:
     first = next(b.i for b in bars if b.time >= start)
     last = max(b.i for b in bars if b.time <= end)
     return first, last
+
+
+def history_payload(bars: list[Bar]) -> dict:
+    """The §10.2 `history` message: the replay window, with S and F rebased to 100 at its first bar."""
+    first, last = replay_range(bars)
+    base_S, base_F = bars[first].S, bars[first].F
+    return {
+        "type": "history",
+        "bars": [
+            {
+                "i": b.i,
+                "time": b.time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "S": 100.0 * b.S / base_S,
+                "F": 100.0 * b.F / base_F,
+                "rho": b.rho,
+            }
+            for b in bars[first : last + 1]
+        ],
+    }
