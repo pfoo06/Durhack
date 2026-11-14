@@ -199,3 +199,56 @@ def test_reset_shows_the_restored_adviser_at_once(bars):
     mac.step(0.05, 60.1)
     assert mac.paused and mac.state.score == warm_score
     assert mac.state_message()["adviser"]["score"] == round(warm_score, 4)
+
+
+CYCLE = 4 * C.MELODY_SLOT_S
+
+
+def _phase(a, b) -> float:
+    return ((a.slot_t0 - b.slot_t0 + CYCLE / 2) % CYCLE) - CYCLE / 2
+
+
+def _melody_room(bars, starter: int):
+    room = app.LoopbackRoom(bars, 0.0, app.C.CHORD_GAIN_DB, app.C.PILOT_GAIN_DB, modem_mode="melody")
+    room.macs[starter].handle({"type": "control", "action": "start"})  # before the other can hear the count-in
+    while room.macs[1 - starter].paused and room.t < 40:
+        room.step(1 / app.C.LOOP_HZ)
+    return room
+
+
+def _packets_over(room, seconds: float) -> list[int]:
+    before = [d.stats["packets"] for d in room.decoders]
+    end = room.t + seconds
+    while room.t < end:
+        room.step(1 / app.C.LOOP_HZ)
+    return [d.stats["packets"] - b for d, b in zip(room.decoders, before)]
+
+
+def test_melody_turns_align_when_the_higher_channel_started_first(bars):
+    """Channel 1 starts, channel 0 joins late: channel 1 lines its turns up with channel 0, the reference."""
+    room = _melody_room(bars, starter=1)
+    got = _packets_over(room, 40)
+    assert abs(_phase(*room.macs)) < 2 * C.MELODY_ALIGN_S
+    assert all(n >= 3 for n in got)
+
+
+def test_melody_turns_realign_after_a_restart(bars):
+    room = _melody_room(bars, starter=0)
+    _packets_over(room, 15)
+    room.macs[1].handle({"type": "control", "action": "start"})  # restarts its own turn clock from now
+    _packets_over(room, 15)
+    got = _packets_over(room, 40)
+    assert abs(_phase(*room.macs)) < 2 * C.MELODY_ALIGN_S
+    assert all(n >= 3 for n in got)
+
+
+def test_melody_peers_never_look_lost(bars):
+    """A clock turn leaves 2 cycles (11.2 s) between adviser packets; LOST_AFTER_S must cover it."""
+    room = _melody_room(bars, starter=0)
+    _packets_over(room, 15)  # both have heard each other at least once
+    dt, empty = 1 / app.C.LOOP_HZ, 0
+    end = room.t + 60
+    while room.t < end:
+        room.step(dt)
+        empty += sum(1 for m in room.macs if not m.state_message()["peers"])
+    assert empty == 0

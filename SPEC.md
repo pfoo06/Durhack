@@ -283,7 +283,8 @@ class Heard:                  # one successfully decoded packet
 | `EXPLORE_BELOW` | 0.8 | P3 | Only explore while own score is under this, so the calm harmony is untouched |
 | `REVERT_MARGIN` | 0.05 | P3 | How much the gap may worsen before we revert |
 | `BLACKLIST_S` | 10.0 | P3 | Ignore a leader for this long after reverting a move towards it |
-| `LOST_AFTER_S` | 10.0 | P3 | Forget an adviser after this long without a packet (also how long a heard position counts, §9.4a) |
+| `LOST_AFTER_S` | 12.0 | P3 | Forget an adviser after this long without a packet (also how long a heard position counts, §9.4a). Longer than two melody cycles (11.2 s), the gap a clock turn leaves between adviser packets |
+| `MELODY_ALIGN_S` | 0.1 | P2 | Re-align our melody turns to the timing reference's when more than this far off (§9.6) |
 | `CLOCK_EVERY` | 3 | P2 | Every 3rd packet a running Mac sends is its position (a clock packet, §9.4a) |
 | `RESYNC_BARS` | 2 | P2 | A Mac re-syncs only when more than this many bars from the room |
 | `SAMPLE_RATE` | 48000 | P2 | Audio sample rate, input and output |
@@ -950,6 +951,7 @@ The pilot tones (§9.1) are audible to many people. The melody modem sends the s
 - **Digits.** The 10 nibbles, read as one 40-bit number, are written in base 14 (14¹¹ > 2⁴⁰): 11 digits, one note each. Nibble 1 (reserved, 0 in pilots) carries the sender's channel. The CRC-8 is unchanged. Only adviser packets are sent.
 - **Notes.** 14 notes, B6 (1976 Hz) up to B8 (7902 Hz), A major, **without C♯8**: that note sits on a count-in click partial (§9.4). Everything is above the chords (stop at 1.8 kHz) and under 8 kHz. A note is a sine with a 4 ms attack and a 35 ms decay, 80 ms sounding in a 100 ms slot. Played at `MELODY_GAIN_DB` (−12), 6 dB above the pilots.
 - **Turns.** All Macs share one alphabet, so they take turns: channel *c* plays at the start of slot *k* where *k* mod 4 = *c*, slots `MELODY_SLOT_S` (1.4 s) long, counted from the moment the replay started (beat 4 of the count-in). One packet is 1.1 s long, so each Mac is heard once per 5.6 s (pilots: once per 1.5 s). A Mac that missed the count-in has the wrong slot clock and collides with the others.
+- **Alignment.** Every Mac lines its turns up with the melody it actually hears from the **lowest channel** it hears (the timing reference, which never moves). A packet from channel *c* starts at the opening of one of *c*'s turns, so a Mac moves its turn origin to `packet start − c × MELODY_SLOT_S` (mod one cycle) when it is more than `MELODY_ALIGN_S` off. This repairs late joins, restarts and drift, which otherwise leave Macs playing over each other.
 - **Decoding.** `MelodyDecoder` has the `Decoder` interface. Each 10 ms hop: power of the 3 bins around each note, strongest note, and its dB over the median note (≥ `MIN_TONE_DB`). A packet is 11 notes 10 hops apart whose digits give nibble 0 = 15, nibble 1 ≤ 3, type 0 and a good CRC. Packets from our own channel are dropped.
 - **Both are always decoded** (`Ears` in `app.py`), so Macs on different modems hear each other. The modem is chosen per Mac: `--modem pilot|melody` and the UI button.
 - **Count-in detector change.** A single note near a click partial looked like a click, so an onset now needs at least 3 of the 4 partials to rise together (each against its own median).
@@ -1181,7 +1183,7 @@ Each module has one test file, `backend/tests/test_<module>.py`. Tests MUST run 
 | | **No move** | A peer 0.03 ahead: the dial doesn't change |
 | | **Snap** | A peer at dial 3.05, us at 3.0: dial = 3.05 |
 | | **Revert** | Make the gap worsen by 0.1 after 16 bars: the dial is restored and the peer is blacklisted for 10 s |
-| | **Lost** | A peer silent for 11 s isn't used as leader |
+| | **Lost** | A peer silent for longer than `LOST_AFTER_S` (12 s) isn't used as leader |
 | | **Alone** | No peers: the dial never changes over the whole replay |
 | | **Hysteresis** | Dial 2.55 → step stays 2. Dial 2.61 → step 3. |
 | `test_modem.py` | **CRC** | `crc8(b"123456789") == 0xF4` |

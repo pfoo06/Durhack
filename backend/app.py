@@ -143,6 +143,7 @@ class Mac:
         self._last_decide = -1e9
         self._now = 0.0  # latest main-loop time, for the age of what we've heard
         self.history = history_payload(bars)
+        self._melody_heard: dict[int, float] = {}  # channel -> when we last heard its melody (for the timing reference)
         self._sent = 0  # packets handed out by next_packet
         self._clock_seq = 0
 
@@ -165,6 +166,8 @@ class Mac:
         if now - self._last_decide >= C.DECISION_PERIOD_S:
             self.adviser.decide(now)
             self._last_decide = now
+            if hasattr(self.adviser, "state"):  # a move, or a peer going quiet, shows now, not on the next bar
+                self.state = self.adviser.state()
 
     def next_packet(self) -> AdviserPacket | ClockPacket:
         """Adviser packets, plus every CLOCK_EVERY-th packet this Mac's replay position while it's running, so a Mac
@@ -189,6 +192,8 @@ class Mac:
 
     def on_heard(self, heard: Heard, now: float, packet_s: float = modem.PACKET_S) -> None:
         pkt = heard.packet
+        if packet_s == melody.PACKET_S:
+            self._align_turns(pkt.channel, heard.received_at - packet_s, now)
         if isinstance(pkt, AdviserPacket):
             self.adviser.on_heard(heard)
             return
@@ -202,6 +207,22 @@ class Mac:
                 est = pkt.bar + speed * age
                 self.slot_t0, self._slot_sent = now - max(0.0, est - (self.first + 1)) / speed, {}
             log.info("channel %d joined the room at bar %d (heard channel %d)", self.channel, pkt.bar, pkt.channel)
+
+    def _align_turns(self, ch: int, started: float, now: float) -> None:
+        """MELODY: keep our turns in step with the lowest channel we hear (the timing reference), so late joins,
+        restarts and drift can't leave Macs playing over each other (§9.6). The reference itself never moves.
+
+        Channel `ch`'s packet started `started`, at the opening of one of its turns, so any origin
+        `started − ch × MELODY_SLOT_S` (mod one cycle of four turns) agrees with it."""
+        self._melody_heard[ch] = now
+        heard = [c for c, t in self._melody_heard.items() if now - t <= C.LOST_AFTER_S and c < self.channel]
+        if self.slot_t0 is None or not heard or ch != min(heard):
+            return
+        cycle = 4 * C.MELODY_SLOT_S
+        off = (started - ch * C.MELODY_SLOT_S - self.slot_t0 + cycle / 2) % cycle - cycle / 2
+        if abs(off) > C.MELODY_ALIGN_S:
+            self.slot_t0 += off
+            self._slot_sent = {}  # turn numbers moved; at worst one turn is sent twice
 
     def on_count_in(self, lag: float = 0.0) -> None:  # COUNT-IN: heard another Mac's beat 4, `lag` s ago
         ok = self.clock.on_count_in(lag)  # False for our own echo, or when already running

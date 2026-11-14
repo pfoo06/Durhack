@@ -187,7 +187,7 @@ def test_lost_peer_is_not_leader() -> None:
     a = Adviser(0, 0.0)
     a.score = 0.5
     hear(a, 1, 0.9, 5.0, at=100.0)
-    a.decide(111.0)  # silent for 11 s > LOST_AFTER_S
+    a.decide(100.0 + C.LOST_AFTER_S + 1)  # silent for longer than LOST_AFTER_S
     assert a.dial == 0.0
     s = a.state()
     assert s.leader_channel == 0 and s.heard == 0
