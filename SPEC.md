@@ -932,7 +932,7 @@ Higher speeds (5–7) are for skipping through calm periods. Convergence is tune
 ### 9.4a Late join and re-sync (#35)
 The count-in is the only thing that lines Macs up at the start, so a Mac that misses it, or is started twice, or paused, stays out of step for the whole replay. To fix that without a conductor:
 - **Announce.** While its replay is running, every `CLOCK_EVERY`-th packet a Mac sends is a **clock packet** (type 1, §9.2): its position (the next bar it will play, 12 bits) and speed step. The other packets stay adviser packets. Both modems carry it (the melody decoder accepts types 0 and 1).
-- **Estimate.** A heard position is aged: `bar + speed × (now − received_at + 1.6 s)`, because the position was stamped when the packet started. The room position is the **median** of the estimates heard in the last `LOST_AFTER_S`, advanced at our own speed since.
+- **Estimate.** A heard position is aged: `bar + speed × (now − received_at + PACKET_S)`, because the position was stamped when the packet started. `PACKET_S` is the time from a packet's first tone to `received_at` for the modem it arrived on: 1.54 s for pilots (`modem.PACKET_S`), 1.08 s for melody (`melody.PACKET_S`). `Ears.feed_timed` returns it with each packet. The room position is the **median** of the estimates heard in the last `LOST_AFTER_S`, advanced at our own speed since.
 - **Join.** A Mac that is paused (never started, or Reset) and hears a position **joins**: it adopts that speed, starts running, and catches up through every bar in order (the adviser still processes every bar, up to `MAX_CATCHUP_BARS` per tick). With the melody modem it also lines its turn clock up with the room.
 - **Re-sync.** A running Mac more than `RESYNC_BARS` **behind** the room catches up at once. One more than `RESYNC_BARS` **ahead** holds (plays no bars) until the room is within reach, because bars are never un-processed. Inside ±`RESYNC_BARS` it free-runs.
 - **Exceptions.** Heard positions are ignored while a Mac is counting in, and while it is **held**: Pause on a Mac's own page holds it, so it doesn't rejoin the room until Start or Reset. Start on a running room's Mac restarts that Mac's replay, and the room then pulls it back to the room's position.
@@ -945,7 +945,7 @@ In loopback (`LoopbackRoom`, 0 dB SNR, 1 bar/s): Start pressed before the other 
 - **Use:** for each peer heard on pilots, show "✓ heard" in the UI if that peer's chord template scores ≥ 0.6.
 - **Never used for decisions (D4).**
 
-### 9.6 Melody modem (`audio/melody.py`; optional, UI toggle, default off)
+### 9.6 Melody modem (`audio/melody.py`; the default since the pilots proved too harsh in the room; UI toggle back to pilots)
 The pilot tones (§9.1) are audible to many people. The melody modem sends the same 40-bit packet (§9.2) as 11 plucked notes of the A-major scale instead.
 - **Digits.** The 10 nibbles, read as one 40-bit number, are written in base 14 (14¹¹ > 2⁴⁰): 11 digits, one note each. Nibble 1 (reserved, 0 in pilots) carries the sender's channel. The CRC-8 is unchanged. Only adviser packets are sent.
 - **Notes.** 14 notes, B6 (1976 Hz) up to B8 (7902 Hz), A major, **without C♯8**: that note sits on a count-in click partial (§9.4). Everything is above the chords (stop at 1.8 kHz) and under 8 kHz. A note is a sine with a 4 ms attack and a 35 ms decay, 80 ms sounding in a 100 ms slot. Played at `MELODY_GAIN_DB` (−12), 6 dB above the pilots.
@@ -1284,7 +1284,7 @@ Written by the P2 agents' PRs (#7 clock, #8 synth, #10 modem). They record where
 - **Not tested on hardware:** real speaker and mic response at 2–6 kHz, hall noise, `DETECT_LAG_S`, and the real Mac-to-Mac start offset; whether the deaf window (`COUNT_IN_DEAF_S`) covers the room echo of a Mac's own clicks (loopback shows 1 bar at 20 Hz loop granularity).
 
 ### Melody modem (`audio/melody.py`; branch `feat/melody-modem`)
-- Why: the pilots (14–19 kHz at −18 dB) were jarring in the room. Design and wire format are in §9.6. It is a per-Mac switch, off by default, so the demo can fall back to pilots.
+- Why: the pilots (14–19 kHz at −18 dB) were jarring in the room. Design and wire format are in §9.6. It is a per-Mac switch, **on by default** (`DEFAULT_MODEM = "melody"`), so the demo can still fall back to pilots. Every Mac always decodes both.
 - In loopback: 0 dB SNR → 21 packets each way over a full replay (pilots: 64) with 2–3 bad CRCs (pilots: ~30). 30 packets through noise sized for a 0 dB pilot, at +6 dB signal: ≥ 28 decoded.
 - Cost: a Mac is heard every 5.6 s instead of every 1.5 s. The loopback adviser still converges; not measured with four Macs.
 - Turns need all Macs to start from the same count-in. At −3 dB the follower's count-in detection (3 dB margin, above) is the weak link, and a late Mac collides with the others' turns.

@@ -8,6 +8,8 @@ _SYM = (C.TONE_MS + C.GAP_MS) * C.SAMPLE_RATE // 1000  # samples per symbol slot
 _TONE = C.TONE_MS * C.SAMPLE_RATE // 1000
 _HPS = _SYM // C.HOP  # hops per symbol slot (16): slots are a whole number of hops
 _NSYM = 10
+# Seconds from a packet's first tone to Heard.received_at (the end of its last tone): 9 × 160 ms + 100 ms.
+PACKET_S = ((_NSYM - 1) * _SYM + _TONE) / C.SAMPLE_RATE
 _SPAN = _HPS * (_NSYM - 1)  # hops from symbol 0's window to symbol 9's
 _EXT = 12  # extra alignments tried after the first valid one (timing refinement)
 _LAST_END = (_NSYM - 1) * _SYM + _TONE  # samples from tone 0 start to last tone end

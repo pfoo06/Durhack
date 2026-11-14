@@ -98,9 +98,9 @@ def test_smoke_melody(bars):
 
 def test_modem_switch_is_open_to_macs(bars):
     mac = app.Mac(bars, 1)
-    assert mac.state_message()["modem"] == "pilot"
-    assert mac.handle({"type": "modem", "mode": "melody"}) is None and mac.state_message()["modem"] == "melody"
-    assert mac.handle({"type": "modem", "mode": "pilot"}) is None and mac.modem == "pilot"
+    assert mac.state_message()["modem"] == "melody"  # the quiet melody is the default (C.DEFAULT_MODEM)
+    assert mac.handle({"type": "modem", "mode": "pilot"}) is None and mac.state_message()["modem"] == "pilot"
+    assert mac.handle({"type": "modem", "mode": "melody"}) is None and mac.modem == "melody"
     assert mac.handle({"type": "modem", "mode": "x"}) is not None
 
 
@@ -149,3 +149,21 @@ def test_state_lists_the_peers_it_hears(bars):
     peers = room.macs[1].state_message()["peers"]
     assert [p["channel"] for p in peers] == [0]
     assert set(peers[0]) == {"channel", "dial", "score", "ageS"} and 0 <= peers[0]["ageS"] <= app.C.LOST_AFTER_S
+
+
+@pytest.mark.parametrize("kind", ["pilot", "melody"])
+def test_heard_packets_carry_their_modem_length(kind):
+    """A position must be aged by the modem it arrived on: melody packets are shorter than pilot ones (#35)."""
+    import numpy as np
+    from backend.audio import melody, modem
+    from backend.contracts import ClockPacket
+    enc, packet_s = (modem.encode, modem.PACKET_S) if kind == "pilot" else (melody.encode, melody.PACKET_S)
+    lead = int(0.5 * C.SAMPLE_RATE)
+    audio = np.concatenate([np.zeros(lead, np.float32), enc(ClockPacket(0, 3, 100, 1)), np.zeros(C.SAMPLE_RATE, np.float32)])
+    ears, got = app.Ears(1), []
+    for a in range(0, len(audio), C.BLOCK):
+        got += ears.feed_timed(audio[a : a + C.BLOCK], a / C.SAMPLE_RATE)
+    assert len(got) == 1
+    heard, s = got[0]
+    assert s == packet_s and heard.packet.bar == 100
+    assert abs(heard.received_at - (0.5 + packet_s)) < 0.05  # received_at is packet start + its modem's length
