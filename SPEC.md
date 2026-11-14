@@ -465,7 +465,7 @@ Run it as `python scripts/prepare_data.py data/raw/ data/chf2015.csv`. It MUST:
 | --- | --- | --- |
 | Warm-up, 2 January to 11 January | 72 | 11 on Friday 2 January, 60 in the week of 4 January, 1 on Sunday evening 11 January. Only about 1 × the longest half-life (64 bars): the slowest strategy hasn't fully settled. Fine for the proof of concept; download December 2014 to fix it. |
 | Replay, 12 to 23 January | 119 (bar indexes 72 to 190) | 59 bars in week 1, then 60 in week 2 |
-| Shock | bar 41 of the replay (index 113, the 08:00–10:00 bar) | Thursday 15 January. `rS` = 0.268 on the shock bar. |
+| Shock | bar 40 of the replay (index 112, the 08:00–10:00 bar) | Thursday 15 January. `rS` = 0.268 on the shock bar. |
 | Total | 191 | Fits the 12-bit bar field in clock packets (maximum 4,095). At the default 8 bars/s the replay lasts about 15 s, so `SPEED_BARS_PER_S` (P2) needs slowing for the ~2-minute arc in §1. |
 
 **FX market hours:** the market is open from Sunday 22:00 UTC to Friday 22:00 UTC. Hours with no trading have no bars. Half-lives count **bars, not calendar time**, so weekends don't decay anyone's memory.
@@ -604,12 +604,12 @@ With **15-minute bars the sweep failed**: after the shock the EUR–CHF link at 
 
 | Step | H (bars) | Calm | Storm | Aftermath |
 | --- | --- | --- | --- | --- |
-| 0 | 1 | 0.925 | 0.001 | 0.311 |
-| 3 | 8 | 0.928 | 0.000 | 0.167 |
-| 4 | 16 | 0.928 | 0.000 | 0.088 |
-| 5 | 32 | 0.927 | 0.000 | 0.062 |
+| 0 | 1 | 0.948 | 0.000 | 0.306 |
+| 3 | 8 | 0.951 | 0.000 | 0.164 |
+| 4 | 16 | 0.951 | 0.000 | 0.086 |
+| 5 | 32 | 0.950 | 0.000 | 0.061 |
 
-Calm gap 0.003 (PASS), aftermath gap 0.249 (PASS), leader changes from step 4 to step 0 (PASS). Aftermath scores stay under about 0.35, so the converged chord stays somewhat dissonant (§8.2): the euro genuinely stopped hedging the franc. Elsewhere in this section, read "96 bars" as `SCORE_WINDOW`.
+Calm gap 0.003 (PASS), aftermath gap 0.245 (PASS), leader changes from step 4 to step 0 (PASS). Aftermath scores stay under about 0.35, so the converged chord stays somewhat dissonant (§8.2): the euro genuinely stopped hedging the franc. Elsewhere in this section, read "96 bars" as `SCORE_WINDOW`.
 
 #### What the sweep MUST show (pass criteria)
 `tools/sweep.py` runs each of the 7 steps **alone** through warm-up and replay, then prints a table of mean E per step for three phases:

@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from backend.config import H_MIN_BARS, MOVE_THRESHOLD, SCORE_WINDOW, SHOCK_TIME, START_DIALS  # noqa: E402
+from backend.config import BAR_MINUTES, H_MIN_BARS, MOVE_THRESHOLD, SCORE_WINDOW, SHOCK_TIME, START_DIALS  # noqa: E402
 from backend.data import load_bars, replay_range  # noqa: E402
 from backend.finance import Effectiveness, Hedger  # noqa: E402
 
@@ -43,7 +43,8 @@ def main() -> None:
     bars = load_bars()
     first, last = replay_range(bars)
     shock_time = datetime.fromisoformat(SHOCK_TIME)
-    shock = next(b.i for b in bars if b.time >= shock_time)
+    bar_length = timedelta(minutes=BAR_MINUTES)
+    shock = next(b.i for b in bars if b.time <= shock_time < b.time + bar_length)  # the bar containing the shock
     phases = {
         "calm": slice(first, shock),
         "storm": slice(shock, shock + SCORE_WINDOW),
