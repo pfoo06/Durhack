@@ -2,3 +2,5 @@ numpy
 sounddevice
 pytest
 pandas
+fastapi
+uvicorn[standard]
