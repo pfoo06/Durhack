@@ -277,7 +277,7 @@ class Heard:                  # one successfully decoded packet
 | `MOVE_THRESHOLD` | 0.05 | P3 | The leader must beat us by at least this much before we move |
 | `STEP_FRACTION` | 0.2 | P3 | The fraction of the gap to the leader's dial moved per decision |
 | `SNAP_DISTANCE` | 0.1 | P3 | Within this distance, jump straight to the leader's dial |
-| `TRIAL_BARS` | 16 | P3 | Bars to wait before judging a move |
+| `TRIAL_BARS` | 4 | P3 | Bars to wait before judging a move (8 h at 2-hour bars) |
 | `REVERT_MARGIN` | 0.05 | P3 | How much the gap may worsen before we revert |
 | `BLACKLIST_S` | 10.0 | P3 | Ignore a leader for this long after reverting a move towards it |
 | `LOST_AFTER_S` | 10.0 | P3 | Forget an adviser after this long without a packet |
@@ -292,7 +292,7 @@ class Heard:                  # one successfully decoded packet
 | `RAMP_MS` | 5 | P2 | Raised-cosine fade at each tone edge |
 | `MIN_TONE_DB` | 10.0 | P2 | A tone counts only if it's this far above the channel median |
 | `SPEED_BARS_PER_S` | (0, 1, 2, 4, 8, 16, 32, 64) | P2 | Bars per second for speed steps 0–7 |
-| `DEFAULT_SPEED_STEP` | 4 | P2 | 8 bars per second |
+| `DEFAULT_SPEED_STEP` | 1 | P2 | 1 bar per second: the 119-bar replay takes about 2 minutes |
 | `FOLLOW_JUMP_BARS` | 8 | P2 | Bigger errors than this jump or hold, smaller ones trim (§9.4) |
 | `FOLLOW_TRIM` | 0.10 | P2 | Maximum ±10% speed adjustment while following |
 | `RESET_BACK_BARS` | 96 | P2 | If the conductor is this far behind us, treat it as a reset |
@@ -707,7 +707,7 @@ After `TRIAL_BARS` bars:
 
 **Why compare the gap, not the raw score:** when the market turns, every score drops together. A raw-score check would undo good moves every time the market turned. The gap to the leader cancels the market-wide swing.
 
-**Known limit:** the score is a 96-bar average, so after 16 bars only about 1/6 of the window reflects the new dial. Trials are weak evidence, which is why `REVERT_MARGIN` is generous. P3 tunes `TRIAL_BARS` in the simulation.
+**Known limit:** the score is a 24-bar average, so after 4 bars only about 1/6 of the window reflects the new dial. Trials are weak evidence, which is why `REVERT_MARGIN` is generous. P3 tunes `TRIAL_BARS` in the simulation.
 
 ### 7.5 Resilience (the Neptune North point)
 - **No peers heard:** `decide` finds only itself as a candidate, so it never moves. The adviser keeps hedging and playing on its own. Nothing breaks.
@@ -890,14 +890,16 @@ else:                          trim = 1 + clamp(err / FOLLOW_JUMP_BARS, −1, 1)
 - **Startup:** a follower starts `free` and **paused** at `replay_start`. The first clock packet it hears starts it.
 - **Controls on a follower:** while `following`, the follower ignores start, pause, reset and speed from its own UI (the UI shows them disabled). While `free`, it accepts them.
 
-**Time conversions at the default speed (step 4, 8 bars per second):**
+**Time conversions at the default speed (step 1, 1 bar per second, 2-hour bars):**
 | Thing | Bars | Real time |
 | --- | --- | --- |
-| 1 bar | 1 | 0.125 s |
-| 1 trading hour | 4 | 0.5 s |
-| 1 trading day (= W) | 96 | 12 s |
-| One packet cycle | about 15 | 1.9 s |
-| Decision period / trial | 16 | 2 s |
+| 1 bar | 1 | 1 s |
+| 1 trading day | 12 | 12 s |
+| Score window W (2 trading days) | 24 | 24 s |
+| One packet cycle | about 2 | 1.9 s |
+| Decision period | about 2 | 2 s |
+| Trial | 4 | 4 s |
+| Whole replay | 119 | about 2 minutes (shock at about 0:40) |
 | Lost timeout | 80 | 10 s |
 | Whole replay | about 952 | about 119 s |
 | Start to shock | about 326 | about 41 s |
