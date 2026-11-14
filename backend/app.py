@@ -5,7 +5,6 @@ import argparse
 import asyncio
 import contextlib
 import copy
-import dataclasses
 import json
 import logging
 import sys
@@ -20,9 +19,9 @@ from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import config as C
-from backend.audio import modem
+from backend.audio import countin, modem
 from backend.audio.synth import Synth
-from backend.contracts import AdviserPacket, AdviserState, Bar, ClockPacket, Heard
+from backend.contracts import AdviserPacket, AdviserState, Bar, Heard
 from backend.data import history_payload, load_bars, replay_range
 from backend.finance import Effectiveness, Hedger, PnL
 from backend.replay import Clock
@@ -118,7 +117,6 @@ class Mac:
         self.synth = Synth()
         self.synth.set(self.state.step, self.state.score)
         self.paused = True
-        self._clock_next = True
         self._last_decide = -1e9
         self.history = history_payload(bars)
 
@@ -131,40 +129,33 @@ class Mac:
         for bar in tick.bars:  # in order, never skip
             self.state = self.adviser.on_bar(bar)
             self.bar = bar.i
-        if self.clock.status == "following" and tick.bars:
-            self.paused = False
         self.synth.set(self.state.step, self.state.score)
         if now - self._last_decide >= C.DECISION_PERIOD_S:
             self.adviser.decide(now)
             self._last_decide = now
 
-    def next_packet(self) -> AdviserPacket | ClockPacket:
-        """Conductor alternates clock and adviser packets; followers send adviser packets (§4.7)."""
-        if self.conductor and self._clock_next:
-            self._clock_next = False
-            return dataclasses.replace(self.clock.packet(), channel=self.channel)  # §17: Clock uses channel 0
-        self._clock_next = True
+    def next_packet(self) -> AdviserPacket:
+        """Every Mac sends adviser packets only; the conductor's clock is the count-in (SPEC §9.4)."""
         return self.adviser.packet()
 
     def on_heard(self, heard: Heard, now: float) -> None:
-        if isinstance(heard.packet, ClockPacket):
-            if not self.conductor:
-                self.clock.on_clock(heard, now)
-        else:
+        if isinstance(heard.packet, AdviserPacket):  # clock packets are no longer sent; ignore any heard
             self.adviser.on_heard(heard)
 
-    # --- UI ---
-    def controls_enabled(self) -> bool:
-        return self.conductor or self.clock.status == "free"
+    def on_count_in(self, lag: float = 0.0) -> None:  # COUNT-IN: a follower heard beat 4, `lag` s ago
+        if not self.conductor:
+            self.clock.on_count_in(lag)
+            self.paused = False
 
+    # --- UI ---
     def handle(self, msg: dict) -> str | None:
         """Apply a UI message. Returns an error message if refused (§10.2)."""
-        if not self.controls_enabled():
+        if not self.conductor:  # COUNT-IN: start, pause, reset and speed are conductor-only
             return "following the conductor; controls disabled"
         if msg.get("type") == "control":
             action = msg.get("action")
             if action == "start":
-                self.clock.start(); self.paused = False
+                self.clock.start(); self.paused = False  # conductor: begins a new count-in
             elif action == "pause":
                 self.clock.pause(); self.paused = True
             elif action == "reset":
@@ -203,6 +194,7 @@ class LoopbackRoom:
         from backend.mocks import VirtualAir
         self.macs = [Mac(bars, 0, True), Mac(bars, 1, False)]
         self.decoders = [modem.Decoder(m.channel) for m in self.macs]
+        self.detector = countin.CountInDetector()  # COUNT-IN: the follower listens; the conductor never does
         self.air = [VirtualAir(snr_db, tone_amplitude=_db(pilot_gain_db), seed=k) for k in range(2)]
         self.pilot: list[deque[np.ndarray]] = [deque(), deque()]
         self.chord_gain, self.pilot_gain = _db(chord_gain_db), _db(pilot_gain_db)
@@ -222,6 +214,8 @@ class LoopbackRoom:
     def step(self, dt: float) -> None:
         """Advance virtual time by dt: main-loop work, then dt of audio through the air."""
         for k, mac in enumerate(self.macs):
+            if mac.clock.take_count_in(sum(len(a) for a in self.pilot[k]) / C.SAMPLE_RATE):  # COUNT-IN: play the clicks
+                self.pilot[k].append(countin.clicks() * _db(C.COUNT_IN_GAIN_DB) / self.pilot_gain)
             mac.step(dt, self.t)
             if not self.pilot[k]:
                 self.pilot[k].append(modem.encode(mac.next_packet()))
@@ -229,30 +223,36 @@ class LoopbackRoom:
         outs = [m.synth.render(n).copy() * self.chord_gain + self._pilot_chunk(k, n) * self.pilot_gain
                 for k, m in enumerate(self.macs)]
         for k, mac in enumerate(self.macs):
-            for heard in self.decoders[k].feed(self.air[k].mix(outs), self.t):
+            heard_audio = self.air[k].mix(outs)
+            for heard in self.decoders[k].feed(heard_audio, self.t):
                 mac.on_heard(heard, self.t + dt)
+            if not mac.conductor and (lag := self.detector.feed(heard_audio)) is not None:  # COUNT-IN
+                mac.on_count_in(lag)
         self.t += dt
 
 
 def run_smoke(bars: list[Bar], snr_db: float = 0.0, chord_gain_db: float = C.CHORD_GAIN_DB,
               pilot_gain_db: float = C.PILOT_GAIN_DB) -> bool:
-    """--loopback --smoke: replay at speed 7 until ≥200 bars and ≥3 packets decoded by each Mac (virtual time)."""
+    """--loopback --smoke: count-in, then replay at the default speed until ≥200 bars and ≥3 packets decoded by each
+    Mac (virtual time). The follower must have started within 1 bar of the conductor."""
     room = LoopbackRoom(bars, snr_db, chord_gain_db, pilot_gain_db)
-    conductor = room.macs[0]
-    conductor.clock.set_speed(len(C.SPEED_BARS_PER_S) - 1)
-    conductor.handle({"type": "control", "action": "start"})
+    conductor, follower = room.macs
     dt = 1 / C.LOOP_HZ
     target_bars = min(SMOKE_BARS, conductor.last - conductor.first + 1)  # 2-hour bars: the replay is ~119 bars
+    while room.t < 1.5:  # let the follower's detector learn the noise floor
+        room.step(dt)
+    conductor.handle({"type": "control", "action": "start"})
     while room.t < SMOKE_TIMEOUT_S:
         room.step(dt)
         done_bars = conductor.bar - conductor.first + 1 >= target_bars
         if done_bars and all(d.stats["packets"] >= SMOKE_MIN_PACKETS for d in room.decoders):
             break
     stats = [d.stats for d in room.decoders]
-    follower = room.macs[1]
-    log.info("smoke: %.1f virtual s, conductor bar %d, follower bar %d (%s), decode stats %s",
-             room.t, conductor.bar, follower.bar, follower.clock.status, stats)
-    return all(s["packets"] >= SMOKE_MIN_PACKETS for s in stats) and conductor.bar - conductor.first + 1 >= target_bars
+    gap = conductor.bar - follower.bar
+    log.info("smoke: %.1f virtual s, conductor bar %d, follower bar %d (gap %d), decode stats %s",
+             room.t, conductor.bar, follower.bar, gap, stats)
+    return (all(s["packets"] >= SMOKE_MIN_PACKETS for s in stats) and conductor.bar - conductor.first + 1 >= target_bars
+            and 0 <= gap <= 1)
 
 
 # ---------------------------------------------------------------- web server and main loop
@@ -323,6 +323,8 @@ def live_body(mac: Mac, engine: Any, extra: list[StandInAdviser]) -> Any:
         now = time.monotonic()
         dt, state["last"] = now - state["last"], now
         before = mac.bar
+        if mac.clock.take_count_in(engine.pending() / C.SAMPLE_RATE):  # COUNT-IN: queue the clicks behind any pilots
+            engine.send_count_in(countin.clicks())
         mac.step(dt, now)
         for adv in extra:  # the fake neighbour follows our bars with its fixed dial
             for bar in mac.bars[max(before + 1, lead_in) : mac.bar + 1]:
@@ -384,8 +386,11 @@ def main(argv: list[str] | None = None) -> int:
         from backend.audio.engine import Engine
         loop_ref: dict[str, asyncio.AbstractEventLoop] = {}
         decoder = modem.Decoder(a.channel)
+        detector = None if a.conductor else countin.CountInDetector()  # COUNT-IN: the conductor never listens
 
         def on_frames(block: np.ndarray, t: float) -> None:  # decoder thread
+            if detector is not None and (lag := detector.feed(block)) is not None:
+                loop_ref["loop"].call_soon_threadsafe(mac.on_count_in, lag)
             for heard in decoder.feed(block, t):
                 loop_ref["loop"].call_soon_threadsafe(mac.on_heard, heard, time.monotonic())
 

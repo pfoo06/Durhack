@@ -30,20 +30,31 @@ def test_messages_match_protocol(bars):
 
 def test_controls(bars):
     follower = app.Mac(bars, 1, conductor=False)
-    assert follower.clock.status == "free"  # no clock heard yet: controls allowed (§10.1)
+    assert follower.clock.status == "free"
+    for msg in ({"type": "control", "action": "start"}, {"type": "speed", "step": 7}, {"type": "control", "action": "reset"}):
+        assert follower.handle(msg) is not None  # conductor-only (SPEC 9.4)
     conductor = app.Mac(bars, 0, conductor=True)
     assert conductor.handle({"type": "speed", "step": 7}) is None
     assert conductor.handle({"type": "control", "action": "start"}) is None
-    conductor.step(1.0, 0.0)
-    assert conductor.bar - conductor.first + 1 == 64 and not conductor.paused
+    assert conductor.clock.take_count_in()
+    conductor.step(0.05, 0.0)
+    conductor.step(1.5, 0.05)  # through the count-in
+    conductor.step(1.0, 1.55)
+    assert conductor.bar - conductor.first + 1 == 8 and not conductor.paused  # default speed, not 7
     assert conductor.handle({"type": "control", "action": "reset"}) is None
-    conductor.step(0.05, 1.0)
+    conductor.step(0.05, 2.6)
     assert conductor.bar == conductor.first - 1 and conductor.paused
     assert conductor.handle({"type": "control", "action": "jump"}) is not None
 
 
-def test_clock_packets_carry_own_channel(bars):
+def test_follower_starts_on_count_in(bars):
+    follower = app.Mac(bars, 1, conductor=False)
+    follower.on_count_in()
+    follower.step(0.05, 0.0)
+    follower.step(1.0, 0.05)
+    assert follower.bar - follower.first + 1 == 8 and not follower.paused and follower.state_message()["clock"] == "free"
+
+
+def test_only_adviser_packets_are_sent(bars):
     mac = app.Mac(bars, 2, conductor=True)
-    first, second = mac.next_packet(), mac.next_packet()
-    assert first.channel == 2 and type(first).__name__ == "ClockPacket"
-    assert second.channel == 2 and type(second).__name__ == "AdviserPacket"
+    assert all(type(mac.next_packet()).__name__ == "AdviserPacket" for _ in range(3))
