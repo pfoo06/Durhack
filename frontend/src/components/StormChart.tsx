@@ -1,14 +1,18 @@
 import { useMemo } from "react";
 import type { HistoryBar } from "../protocol";
-import { C } from "../theme";
+import { C, macColor } from "../theme";
+import type { Trails } from "../useStorm";
 
 /**
- * S and F rebased to 100, rolling correlation ρ (−1 to 1), the shock marker and the replay position.
+ * S and F rebased to 100, rolling correlation ρ (−1 to 1), the shock marker and the replay position, then the race:
+ * this Mac's hedge score E (bold, its colour) against the scores of the Macs it hears (thin, their colours).
  * Only bars up to `bar` are drawn — the chart never reveals the future (SPEC §10.1).
  */
-const W = 440, TOP = 16, PRICE_H = 200, RHO_TOP = 250, RHO_H = 64, H = 340;
+const W = 440, TOP = 16, PRICE_H = 200, RHO_TOP = 250, RHO_H = 64, SC_TOP = 334, SC_H = 90, H = 450;
 
-export function StormChart({ history, bar, shockTime }: { history: HistoryBar[]; bar: number; shockTime: string }) {
+interface Props { history: HistoryBar[]; bar: number; shockTime: string; trails: Trails; channel: number }
+
+export function StormChart({ history, bar, shockTime, trails, channel }: Props) {
   const geo = useMemo(() => {
     if (history.length < 2) return null;
     const i0 = history[0].i, i1 = history[history.length - 1].i;
@@ -24,7 +28,7 @@ export function StormChart({ history, bar, shockTime }: { history: HistoryBar[];
     const stepT = hi - lo > 24 ? 10 : 5;
     for (let v = Math.ceil(lo / stepT) * stepT; v <= hi; v += stepT) ticks.push(v);
     const days = history.filter((b) => b.time.endsWith("T00:00:00Z"));
-    return { i0, x, y, yr, shockX: shock ? x(shock.i) : null, ticks, days };
+    return { i0, i1, x, y, yr, shockX: shock ? x(shock.i) : null, ticks, days };
   }, [history, shockTime]);
 
   if (!geo) return <section className="panel chart"><div className="caps">The storm</div><p className="sub">Waiting for history…</p></section>;
@@ -34,6 +38,13 @@ export function StormChart({ history, bar, shockTime }: { history: HistoryBar[];
   const rhoLine = shown.map((b, n) => `${n ? "L" : "M"}${geo.x(b.i).toFixed(1)} ${geo.yr(b.rho).toFixed(1)}`).join("");
   const last = shown[shown.length - 1];
   const px = last ? geo.x(last.i) : 0;
+  const ys = (e: number) => SC_TOP + SC_H - Math.max(0, Math.min(1, e)) * SC_H;
+  const trail = (m: Map<number, number>) => [...m.entries()]
+    .filter(([i]) => i >= geo.i0 && i <= Math.min(bar, geo.i1))
+    .sort((p, q) => p[0] - q[0])
+    .map(([i, e], n) => `${n ? "L" : "M"}${geo.x(i).toFixed(1)} ${ys(e).toFixed(1)}`).join("");
+  const peerTrails = [...trails.peers.entries()].filter(([ch]) => ch !== channel).sort((p, q) => p[0] - q[0]);
+  const ownNow = trails.own.get(bar);
 
   return (
     <section className="panel chart" aria-label="Storm chart">
@@ -59,7 +70,7 @@ export function StormChart({ history, bar, shockTime }: { history: HistoryBar[];
         ))}
         {geo.shockX !== null && (
           <g>
-            <line x1={geo.shockX} x2={geo.shockX} y1={TOP - 6} y2={RHO_TOP + RHO_H} stroke={C.flareSoft} strokeDasharray="2 3" opacity="0.75" />
+            <line x1={geo.shockX} x2={geo.shockX} y1={TOP - 6} y2={SC_TOP + SC_H} stroke={C.flareSoft} strokeDasharray="2 3" opacity="0.75" />
             <text x={geo.shockX + 6} y={TOP + 4} className="t-serif" fontSize="15" fill="#ffd3dc">the cap breaks</text>
             <text x={geo.shockX + 6} y={TOP + 19} className="t-mono" fontSize="9" fill="rgba(255,211,220,0.7)">15 JAN · 09:30</text>
           </g>
@@ -77,9 +88,19 @@ export function StormChart({ history, bar, shockTime }: { history: HistoryBar[];
         <path d={rhoLine} fill="none" stroke={C.ice} strokeWidth="1.3" opacity="0.9" />
         <text x="6" y={RHO_TOP + 13} className="t-caps" fontSize="8" fill="rgba(168,236,255,0.65)">CORRELATION ρ</text>
 
+        <rect x="0" y={SC_TOP} width={W} height={SC_H} rx="6" fill="rgba(0,0,0,0.2)" />
+        <text x="-6" y={ys(1) + 6} textAnchor="end" className="t-mono" fontSize="8" fill="rgba(201,195,255,0.5)">1</text>
+        <text x="-6" y={ys(0)} textAnchor="end" className="t-mono" fontSize="8" fill="rgba(201,195,255,0.5)">0</text>
+        <text x="6" y={SC_TOP + 13} className="t-caps" fontSize="8" fill="rgba(243,227,195,0.7)">HEDGE SCORE E · THE RACE</text>
+        {peerTrails.map(([ch, m]) => (
+          <path key={ch} d={trail(m)} fill="none" stroke={macColor(ch)} strokeWidth="1.3" opacity="0.6" strokeDasharray="3 2" />
+        ))}
+        <path d={trail(trails.own)} fill="none" stroke={macColor(channel)} strokeWidth="2.6" strokeLinejoin="round" />
+        {ownNow !== undefined && <circle cx={geo.x(Math.min(bar, geo.i1))} cy={ys(ownNow)} r="3.5" fill={macColor(channel)} />}
+
         {last && (
           <g>
-            <line x1={px} x2={px} y1={TOP - 6} y2={RHO_TOP + RHO_H} stroke="rgba(255,255,255,0.45)" />
+            <line x1={px} x2={px} y1={TOP - 6} y2={SC_TOP + SC_H} stroke="rgba(255,255,255,0.45)" />
             <circle cx={px} cy={geo.y(last.S)} r="9" fill="#ff8fa6" opacity="0.35" filter="url(#cTrail)" />
             <circle cx={px} cy={geo.y(last.S)} r="3.5" fill="#ffffff" />
             <circle cx={px} cy={geo.y(last.F)} r="2.4" fill={C.ice} />
@@ -91,7 +112,13 @@ export function StormChart({ history, bar, shockTime }: { history: HistoryBar[];
           </text>
         ))}
       </svg>
-      <div className="chart-foot mono">ρ {last ? last.rho.toFixed(2) : "–"}</div>
+      <div className="chart-foot mono">
+        ρ {last ? last.rho.toFixed(2) : "–"}
+        <span className="legend">
+          <span><i style={{ background: macColor(channel) }} />Mac {channel} (this one)</span>
+          {peerTrails.map(([ch]) => <span key={ch}><i style={{ background: macColor(ch) }} />Mac {ch}</span>)}
+        </span>
+      </div>
     </section>
   );
 }

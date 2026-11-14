@@ -14,6 +14,15 @@ export const C = {
   flareCyan: "#4ff0ff",
 } as const;
 
+// One colour per Mac (channel 0–3), so screens side by side are easy to tell apart.
+export const MAC_COLORS = ["#ffb35c", "#6ff0c4", "#ff7eb6", "#8fb8ff"] as const;
+export const macColor = (ch: number): string => MAC_COLORS[ch] ?? C.lavender;
+
+/** Memory length in hours for a dial: half-life 2^dial bars of 2 hours (mirrors backend config: H_MIN_BARS 1, BAR_MINUTES 120). */
+export const memoryHours = (dial: number) => 2 * 2 ** dial;
+/** A plain name for a strategy, from its dial (0 = 2 h memory … 6 = 128 h). */
+export const styleName = (dial: number) => (dial < 1.5 ? "Fast" : dial < 3.5 ? "Medium" : dial < 4.5 ? "Slow" : "Steady");
+
 // Score thresholds where the synth adds dissonance layers (SPEC §8.2). The UI marks the same points.
 export const CLASH_BELOW = 0.7;
 export const TRITONE_BELOW = 0.4;

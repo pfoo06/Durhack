@@ -25,7 +25,8 @@ def test_messages_match_protocol(bars):
     hist = mac.history["bars"]
     assert hist[0]["S"] == pytest.approx(100.0) and hist[0]["time"] == hello["replayStart"]
     state = mac.state_message()
-    assert set(state) == {"type", "bar", "time", "speed", "paused", "clock", "modem", "adviser"}
+    assert set(state) == {"type", "bar", "time", "speed", "paused", "clock", "modem", "adviser", "peers"}
+    assert state["peers"] == []
     assert set(state["adviser"]) == {"channel", "dial", "step", "chord", "halfLifeHours", "h", "score",
                                      "pnlUnhedgedPct", "pnlHedgedPct", "leaderChannel", "heard", "inTrial"}
     assert state["adviser"]["halfLifeHours"] == pytest.approx(app.C.H_MIN_BARS * 2**3 * app.C.BAR_MINUTES / 60)
@@ -135,3 +136,16 @@ def test_either_mac_can_start_the_room(bars):
     while room.t < 6:
         room.step(dt)
     assert abs(room.macs[0].bar - room.macs[1].bar) <= 1 and room.macs[0].bar > room.macs[0].first
+
+
+def test_state_lists_the_peers_it_hears(bars):
+    room = app.LoopbackRoom(bars, 0.0, app.C.CHORD_GAIN_DB, app.C.PILOT_GAIN_DB)
+    dt = 1 / app.C.LOOP_HZ
+    while room.t < 1.5:
+        room.step(dt)
+    room.macs[0].handle({"type": "control", "action": "start"})
+    while room.t < 12:
+        room.step(dt)
+    peers = room.macs[1].state_message()["peers"]
+    assert [p["channel"] for p in peers] == [0]
+    assert set(peers[0]) == {"channel", "dial", "score", "ageS"} and 0 <= peers[0]["ageS"] <= app.C.LOST_AFTER_S

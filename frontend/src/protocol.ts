@@ -41,6 +41,14 @@ export interface AdviserView {
   inTrial: boolean;
 }
 
+/** Another Mac this one hears (from its adviser packets): its strategy and score. */
+export interface PeerView {
+  channel: number;
+  dial: number;
+  score: number;
+  ageS: number; // seconds since its last packet
+}
+
 export interface StateMsg {
   type: "state";
   bar: number;
@@ -50,6 +58,7 @@ export interface StateMsg {
   clock: ClockStatus;
   modem: Modem;
   adviser: AdviserView;
+  peers?: PeerView[]; // optional: the mock backend doesn't send it
 }
 
 export interface ErrorMsg {

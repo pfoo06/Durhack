@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClientMsg, HelloMsg, HistoryBar, ServerMsg, StateMsg } from "./protocol";
 
+/** Score per bar for this Mac and each Mac it hears, built up from the state stream. Cleared on a reset. */
+export interface Trails {
+  own: Map<number, number>;
+  peers: Map<number, Map<number, number>>; // channel -> bar -> score
+}
+
 export type Conn = "connecting" | "open" | "closed";
 
 const RETRY_MS = 1000; // SPEC §10.1: retry every 1 s
@@ -63,6 +69,23 @@ export function useStorm(url: string) {
   }, []);
 
   return { conn, hello, history, state, error, send };
+}
+
+/** Record each state's scores against its bar, so the chart can draw the race between strategies. */
+export function useTrails(state: StateMsg | null): Trails {
+  const trails = useRef<Trails>({ own: new Map(), peers: new Map() });
+  const lastBar = useRef(-1);
+  if (state && !state.paused) {
+    if (state.bar < lastBar.current) trails.current = { own: new Map(), peers: new Map() }; // the replay restarted
+    lastBar.current = state.bar;
+    trails.current.own.set(state.bar, state.adviser.score);
+    for (const p of state.peers ?? []) {
+      const m = trails.current.peers.get(p.channel) ?? new Map<number, number>();
+      m.set(state.bar, p.score);
+      trails.current.peers.set(p.channel, m);
+    }
+  }
+  return trails.current;
 }
 
 /** A value that updates at most every `ms` — the chart re-renders at most 4×/s (SPEC §10.1). */
