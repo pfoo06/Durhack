@@ -8,8 +8,8 @@ Keep it short: facts, decisions, and who's working on what. Not a diary.
 Durhack hackathon project. Team: Peter Foo, Erinna Anthony, Xin Jie.
 - Idea: _TBD_
 - Stack: _TBD_
-- Run: _TBD_
-- Test: _TBD_
+- Run: `python -m backend.app` (not written yet, P4). Spec: SPEC.md.
+- Test: `python -m pytest backend` (25 pass: modem, synth, replay).
 
 ## Who's working on what
 Claim an area before starting so agents don't collide. Remove the line when it's done.
@@ -30,7 +30,7 @@ Newest first. One line each: what was decided and why.
 2. Branch off the latest `main`: `feat/<short-name>`, `fix/<short-name>` or `chore/<short-name>`.
 3. Commit small and often. Messages say what changed: `Add login form`, not `stuff`.
 4. Open a PR using the template and link the issue (`Closes #12`).
-5. Get 1 approval from a teammate. Resolve every review comment. A new push dismisses old approvals.
+5. Ask a teammate to review. The ruleset requires 0 approvals (you can merge your own PR once CI is green), but review anything touching another person's area. Resolve every review comment. A new push dismisses old approvals.
 6. Squash-merge, delete the branch, pull `main`.
 
 Agents: never push to `main`, never force-push, and never approve your own team's PR on a human's behalf.
