@@ -1181,3 +1181,35 @@ Rehearse at the real speed. If the shock arrives too late, raise the speed durin
 | What do the sweep results show? Do `START_DIALS` need to change? | P3 | +4h |
 | What pilot and chord levels does the hall need? | P2 | +18h |
 | Are any team Macs Intel, or old enough that their speakers or mic behave differently? | All | +2h |
+
+---
+
+## 17. Implementation notes (audio lanes, 2026-11-14)
+Written by the P2 agents' PRs (#7 clock, #8 synth, #10 modem). They record where code goes beyond or differs from the spec. Other agents SHOULD build on these. Remove a note when it's folded into the section it belongs to.
+
+### Merge order
+- All three PRs carry the skeleton commit (`backend/contracts.py`, `backend/config.py`, `requirements.txt`). Land the skeleton first; rebase the others after.
+- `backend/mocks.py` holds only `VirtualAir`. P3 adds `VirtualRoom` to the same file (expect a merge there).
+
+### Synth (`audio/synth.py`)
+- **Noise filter differs from §8.2:** one 2 kHz one-pole low-pass gives only about −53 dB above 8 kHz and fails the band-limit test (§13). It's a cascade of 6 one-pole stages, normalised to unit rms before the 0.15 gain. Marked `ponytail:` in the code.
+- **Constants not in `config.py`** (breaks §12.3 rule 8 until moved; P2 owns them): detune 30 cents, E smoothing 200 ms, crossfade 150 ms, headroom scale 0.3.
+- `render()` does **not** apply `CHORD_GAIN_DB`. The engine does.
+- `render()` returns the **same preallocated float32 buffer** every call. Copy it if you keep it.
+- A `set()` step change that arrives during a crossfade is held until the fade ends.
+- `tools/audition.py`: final four-chord section lasts 6 s (spec gave no length). Not played on hardware yet.
+
+### Modem and engine (`audio/modem.py`, `audio/engine.py`, `mocks.py`)
+- Decoder tries every 10 ms alignment, gated by the two sync tones and CRC-8, and takes the middle of the valid alignments as the timing.
+- `Decoder.stats` is `{"packets", "crc_fail"}`. `crc_fail` also counts false sync candidates.
+- `Engine(synth, on_frames, chord_gain_db, pilot_gain_db, input_device, output_device)`. `on_frames(block, t)` runs on the engine's decoder thread. The callback is exposed as `_callback`.
+- `VirtualAir(snr_db=0.0, tone_amplitude=1.0, seed=0).mix(buffers) -> float32`. `snr_db` is measured inside one 1.2 kHz channel against a pure tone of `tone_amplitude`. **Loopback callers pass the pilot gain as `tone_amplitude`.**
+- Measured: 0 dB SNR → 200/200 decoded, 0 wrong; −3 dB → 100/100; **−6 dB → 4/100**. Little margin in a loud hall. `received_at` error ≤ 16 ms.
+- **Not tested on hardware:** `engine.py` (only a stub-synth check) and `tools/tone_probe.py` (never run). Both MUST run on a real Mac before the +2h hall go/no-go (§12.5).
+
+### Clock (`replay.py`)
+- `Clock` has no channel, so `packet()` returns `ClockPacket(channel=0, ...)`. **P4's `app.py` MUST substitute the Mac's own channel** before encoding.
+- Latency correction uses `PACKET_S = 10·TONE_MS + 9·GAP_MS = 1.54 s` (the spec's 1.54 s constant).
+- Bar numbers and `position` are indices into the `bars` list. `position` is the next bar to emit.
+- On a reset (conductor ≥ `RESET_BACK_BARS` behind), the tick returns `reset=True` plus all bars from `REPLAY_START` to the conductor's bar, **uncapped** (the 200-bar cap applies only to catch-up).
+- A follower starts on its first clock packet and doesn't need `start()`.
