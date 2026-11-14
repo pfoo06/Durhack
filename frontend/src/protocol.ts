@@ -1,12 +1,11 @@
 // WebSocket message types. Mirror of SPEC §10.2 — change both together.
 
-export type ClockStatus = "conductor" | "following" | "free";
+export type ClockStatus = "free";
 export type Modem = "pilot" | "melody"; // how this Mac sends its strategy: high tones, or a quiet melody
 
 export interface HelloMsg {
   type: "hello";
   channel: number;
-  conductor: boolean;
   replayStart: string;
   replayEnd: string;
   shockTime: string;

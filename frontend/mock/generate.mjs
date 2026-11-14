@@ -120,7 +120,7 @@ for (let i = 1; i <= END; i++) {
   const me = advisers[OWN];
   const r = (x, d = 3) => Number(x.toFixed(d));
   lines.push(JSON.stringify({
-    type: "state", bar: i, time: iso(i), speed: 4, paused: false, clock: "conductor",
+    type: "state", bar: i, time: iso(i), speed: 4, paused: false, clock: "free",
     adviser: {
       channel: OWN, dial: r(me.dial), step: me.step, chord: CHORDS[me.step],
       halfLifeHours: r((4 * 2 ** me.dial * BAR_MINUTES) / 60, 2), h: r(me.h), score: r(me.score),
@@ -131,7 +131,7 @@ for (let i = 1; i <= END; i++) {
 }
 
 const hello = {
-  type: "hello", channel: OWN, conductor: true,
+  type: "hello", channel: OWN,
   replayStart: iso(START), replayEnd: iso(END), shockTime: iso(SHOCK),
   speeds: SPEEDS, chords: CHORDS,
 };
