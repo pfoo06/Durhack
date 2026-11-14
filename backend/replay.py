@@ -1,5 +1,7 @@
 """Replay clock (SPEC 9.4). Positions are indices into `bars`. Any Mac can play a 4-beat count-in; every Mac starts on
-beat 4, then each free-runs."""
+beat 4, then each free-runs. Running Macs also announce their position, so a Mac that missed the count-in joins the
+room, and one that drifts more than RESYNC_BARS away from the room catches up or holds (late join, §9.4a)."""
+from statistics import median
 from datetime import datetime, timezone
 
 from backend import config
@@ -31,6 +33,9 @@ class Clock:
         self._count = 0.0  # own count-in: seconds until beat 4
         self._count_due = False  # own clicks not yet handed to the speaker
         self._deaf = 0.0  # seconds left in which a heard count-in is our own echo
+        self._t = 0.0  # seconds of tick() time, for ageing the positions we hear
+        self._room: dict[int, tuple[float, float]] = {}  # channel -> (its position estimate, our _t when heard)
+        self._held = False  # paused by this Mac's own user: don't join the room until Start or Reset
 
     @property
     def status(self) -> ClockStatus:
@@ -72,16 +77,41 @@ class Clock:
     def pause(self) -> None:
         self._paused, self._count, self._count_due = True, 0.0, False
 
+    def hold(self) -> None:
+        """Pause from this Mac's own UI: stays paused even while it hears the room running, until Start or Reset."""
+        self.pause()
+        self._held = True
+
     def reset(self) -> None:
         """Back to REPLAY_START, paused; the next tick reports reset=True."""
         self._pos, self._acc, self._reset_pending = self._first, 0.0, True
+        self._room, self._held = {}, False
         self.pause()
+
+    def on_heard_bar(self, channel: int, bar: int, speed_step: int, age_s: float) -> bool:
+        """Another Mac said it was at `bar`, `age_s` seconds ago, at `speed_step` (§9.4a). Returns True if this
+        joins a running room from paused. Ignored while counting in or held."""
+        if self._count > 0 or self._held:
+            return False
+        step = max(0, min(speed_step, len(config.SPEED_BARS_PER_S) - 1))
+        self._room[channel] = (bar + config.SPEED_BARS_PER_S[step] * age_s, self._t)
+        if self._paused and config.SPEED_BARS_PER_S[step] > 0:
+            self._step, self._paused, self._acc = step, False, 0.0
+            return True
+        return False
+
+    def room_position(self) -> float | None:
+        """Median of where the Macs we heard recently should be now, or None if we've heard none."""
+        speed = config.SPEED_BARS_PER_S[self._step]
+        now = [est + speed * (self._t - at) for est, at in self._room.values() if self._t - at <= config.LOST_AFTER_S]
+        return median(now) if now else None
 
     def set_speed(self, step: int) -> None:
         self._step = max(0, min(step, len(config.SPEED_BARS_PER_S) - 1))
 
     def tick(self, dt: float) -> Tick:
         reset, self._reset_pending = self._reset_pending, False
+        self._t += dt
         self._deaf = max(0.0, self._deaf - dt)
         if self._count > 0:
             self._count -= dt
@@ -93,6 +123,12 @@ class Clock:
         self._acc += float(config.SPEED_BARS_PER_S[self._step]) * dt
         n = int(self._acc)
         self._acc -= n
+        room = self.room_position()
+        if room is not None:  # §9.4a: stay within RESYNC_BARS of the room
+            if self._pos - room > config.RESYNC_BARS:
+                n, self._acc = 0, 0.0  # ahead: hold until the room catches up (bars are never un-processed)
+            elif room - self._pos > config.RESYNC_BARS:
+                n = max(n, int(room - self._pos))  # behind, or just joined: catch up now
         n = max(0, min(n, MAX_CATCHUP_BARS, self._last + 1 - self._pos))
         out = self._bars[self._pos : self._pos + n]
         self._pos += n

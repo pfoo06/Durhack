@@ -6,7 +6,7 @@ import numpy as np
 
 from backend import config as C
 from backend.audio.modem import _crc_of, _unpack, symbols
-from backend.contracts import AdviserPacket, Heard
+from backend.contracts import AdviserPacket, ClockPacket, Heard
 
 _SYM = C.MELODY_NOTE_MS * C.SAMPLE_RATE // 1000
 _TONE = C.MELODY_SOUND_MS * C.SAMPLE_RATE // 1000
@@ -23,7 +23,7 @@ FREQS = 440.0 * 2.0 ** ((_MIDI - 69) / 12)  # 14 notes
 _BINS = np.round(FREQS * C.FFT_N / C.SAMPLE_RATE).astype(int)[:, None] + np.array([-1, 0, 1])  # (14, 3)
 
 
-def digits(packet: AdviserPacket) -> list[int]:
+def digits(packet: AdviserPacket | ClockPacket) -> list[int]:
     s = symbols(packet)
     s[1] = packet.channel  # the sender rides in the header: no per-Mac frequency band any more
     n = 0
@@ -32,7 +32,7 @@ def digits(packet: AdviserPacket) -> list[int]:
     return [n // 14**k % 14 for k in range(_NSYM - 1, -1, -1)]
 
 
-def encode(packet: AdviserPacket) -> np.ndarray:
+def encode(packet: AdviserPacket | ClockPacket) -> np.ndarray:
     """float32 mono, peak 1.0, one plucked note per digit."""
     out = np.zeros(_NSYM * _SYM)
     t = np.arange(_TONE) / C.SAMPLE_RATE
@@ -86,7 +86,7 @@ class MelodyDecoder:
         if n >> 40:
             return False
         s = [n >> (36 - 4 * j) & 15 for j in range(10)]
-        if s[0] != 15 or s[1] > 3 or s[2] != 0 or _crc_of(s) != s[8] << 4 | s[9]:
+        if s[0] != 15 or s[1] > 3 or s[2] > 1 or _crc_of(s) != s[8] << 4 | s[9]:  # type 0 adviser, 1 clock (§9.4a)
             return False
         return s, float(self.db[idx].mean())
 

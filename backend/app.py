@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from backend import config as C
 from backend.audio import countin, melody, modem
 from backend.audio.synth import Synth
-from backend.contracts import AdviserPacket, AdviserState, Bar, Heard
+from backend.contracts import AdviserPacket, AdviserState, Bar, ClockPacket, Heard
 from backend.data import history_payload, load_bars, replay_range
 from backend.finance import Effectiveness, Hedger, PnL
 from backend.replay import Clock
@@ -43,6 +43,8 @@ def _iso(t: Any) -> str:
 def _db(x: float) -> float:
     return 10 ** (x / 20)
 
+
+_PACKET_S = (C.TONE_MS + C.GAP_MS) * 10 / 1000  # a pilot packet's tones (§9.2); its data dates from their start
 
 class Ears:  # MELODY: both modems are always decoded, so Macs on different modems still hear each other
     def __init__(self, channel: int) -> None:
@@ -135,6 +137,8 @@ class Mac:
         self.paused = True
         self._last_decide = -1e9
         self.history = history_payload(bars)
+        self._sent = 0  # packets handed out by next_packet
+        self._clock_seq = 0
 
     # --- the main-loop body ---
     def step(self, dt: float, now: float) -> None:
@@ -154,9 +158,16 @@ class Mac:
             self.adviser.decide(now)
             self._last_decide = now
 
-    def next_packet(self) -> AdviserPacket:
-        """Every Mac sends adviser packets only; the clock is the count-in any Mac can play (SPEC §9.4)."""
-        return self.adviser.packet()
+    def next_packet(self) -> AdviserPacket | ClockPacket:
+        """Adviser packets, plus every CLOCK_EVERY-th packet this Mac's replay position while it's running, so a Mac
+        that missed the count-in can join and a drifting one can re-sync (§9.4a)."""
+        self._sent += 1
+        running = not self.paused and self.bar >= self.first
+        if not running or self._sent % C.CLOCK_EVERY:
+            return self.adviser.packet()
+        pkt = ClockPacket(self.channel, self._clock_seq, min(self.clock.position, 4095), self.clock.speed_step)
+        self._clock_seq = (self._clock_seq + 1) % 16
+        return pkt
 
     def melody_due(self, ch: int, now: float) -> bool:
         """MELODY: is it channel `ch`'s turn (once per cycle, shortly after its slot opens)?"""
@@ -169,8 +180,17 @@ class Mac:
         return True
 
     def on_heard(self, heard: Heard, now: float) -> None:
-        if isinstance(heard.packet, AdviserPacket):  # clock packets are no longer sent; ignore any heard
+        pkt = heard.packet
+        if isinstance(pkt, AdviserPacket):
             self.adviser.on_heard(heard)
+            return
+        age = now - heard.received_at + _PACKET_S  # the position was stamped when the packet started
+        if self.clock.on_heard_bar(pkt.channel, pkt.bar, pkt.speed_step, age):
+            self.paused = False
+            speed = C.SPEED_BARS_PER_S[self.clock.speed_step]
+            if self.slot_t0 is None:  # MELODY: line our turns up with the room's
+                self.slot_t0, self._slot_sent = now - max(0.0, pkt.bar + speed * age - self.first) / speed, {}
+            log.info("channel %d joined the room at bar %d (heard channel %d)", self.channel, pkt.bar, pkt.channel)
 
     def on_count_in(self, lag: float = 0.0) -> None:  # COUNT-IN: heard another Mac's beat 4, `lag` s ago
         ok = self.clock.on_count_in(lag)  # False for our own echo, or when already running
@@ -191,7 +211,7 @@ class Mac:
             if action == "start":
                 self.clock.start(); self.paused = False  # plays a count-in; the others start on beat 4
             elif action == "pause":
-                self.clock.pause(); self.paused = True
+                self.clock.hold(); self.paused = True  # held: doesn't rejoin the room until Start or Reset
             elif action == "reset":
                 self.clock.reset(); self.paused = True
             else:

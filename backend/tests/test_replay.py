@@ -96,3 +96,58 @@ def test_ignores_own_count_in() -> None:
     c.reset()
     c.tick(0.0)
     assert c.on_count_in()  # idle: a later one from another Mac starts us
+
+
+
+# ----- late join (§9.4a) -------------------------------------------------------------------
+
+
+def test_paused_clock_joins_the_room_and_catches_up() -> None:
+    c = Clock(make_bars())
+    assert c.on_heard_bar(0, 40, config.DEFAULT_SPEED_STEP, 0.0)  # the room is 30 bars into the replay
+    out = c.tick(0.05).bars
+    assert out[0].i == 10 and c.position >= 40  # every bar from the start, in order, in one catch-up tick
+
+
+def test_running_clock_holds_when_ahead_of_the_room() -> None:
+    c = counted_in(Clock(make_bars()))
+    c.tick(COUNT_S + 0.01)
+    c.tick(20 / RATE)
+    pos = c.position
+    assert not c.on_heard_bar(1, pos - 10, config.DEFAULT_SPEED_STEP, 0.0)
+    assert c.tick(1 / RATE).bars == []  # 10 bars ahead: wait for the room
+    for _ in range(20):
+        c.tick(1 / RATE)
+    assert c.position - (pos - 10 + 21) <= config.RESYNC_BARS + 1  # moving again once back within reach
+
+
+def test_running_clock_catches_up_when_behind_the_room() -> None:
+    c = counted_in(Clock(make_bars()))
+    c.tick(COUNT_S + 0.01)
+    pos = c.position
+    c.on_heard_bar(1, pos + 15, config.DEFAULT_SPEED_STEP, 0.0)
+    assert len(c.tick(0.05).bars) >= 15
+
+
+def test_small_offsets_are_left_alone() -> None:
+    c = counted_in(Clock(make_bars()))
+    c.tick(COUNT_S + 0.01)
+    c.tick(5 / RATE)
+    pos = c.position
+    c.on_heard_bar(1, pos + config.RESYNC_BARS - 1, config.DEFAULT_SPEED_STEP, 0.0)  # within reach after this tick
+    assert len(c.tick(1 / RATE).bars) == 1  # normal pace
+
+
+def test_held_clock_does_not_join() -> None:
+    c = Clock(make_bars())
+    c.hold()
+    assert not c.on_heard_bar(0, 40, config.DEFAULT_SPEED_STEP, 0.0)
+    assert c.tick(1.0).bars == []
+    c.reset()  # Reset (or Start) releases the hold
+    assert c.on_heard_bar(0, 40, config.DEFAULT_SPEED_STEP, 0.0)
+
+
+def test_no_join_while_counting_in() -> None:
+    c = Clock(make_bars())
+    c.start()
+    assert not c.on_heard_bar(0, 40, config.DEFAULT_SPEED_STEP, 0.0)
