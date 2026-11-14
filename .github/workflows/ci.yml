@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pytest backend
+
+      # Guard: skips until backend/app.py lands, then turns on by itself. No follow-up PR needed.
+      - name: Loopback smoke test
+        if: ${{ hashFiles('backend/app.py') != '' }}
+        run: python -m backend.app --loopback --smoke
+
+      # Guard: skips until frontend/package.json lands, then turns on by itself. No follow-up PR needed.
+      - name: Frontend build
+        if: ${{ hashFiles('frontend/package.json') != '' }}
+        working-directory: frontend
+        run: npm ci && npm run build
