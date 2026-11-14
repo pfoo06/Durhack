@@ -112,7 +112,7 @@ Each line is settled. To change one, raise it with the whole team. Don't change 
 | D5 | **The strategy has exactly one dimension: reaction speed (the dial).** | It maps cleanly to one root note, and convergence on a single dimension is easy to hear |
 | D6 | **Every adviser runs identical maths. Only the dial differs.** | Score differences then come from strategy alone |
 | D7 | **Score = rolling hedge effectiveness over a fixed window (`SCORE_WINDOW`, 24 two-hour bars), the same for everyone** | It's a standard measure, and comparable across advisers |
-| D8 | **MVP convergence = step 20% towards the leader, with trial and revert** | Simple and easy to hear. Particle swarm optimisation comes after the MVP. |
+| D8 | **MVP convergence = step a fixed fraction (`STEP_FRACTION`, 50%) towards the leader, with trial and revert** | Simple and easy to hear. Particle swarm optimisation comes after the MVP. |
 | D9 | **One conductor starts everyone with a 4-beat audible count-in (clicks at 2–6 kHz). After beat 4 every Mac free-runs on its own clock; no clock packets are sent.** | Starts the room together without a network, and without a constant whine. A Mac's clock drifts only tens of ppm, far under one bar over the replay. |
 | D10 | **Everything stays in A major** (one chord per dial step) | Moving between strategies still sounds musical |
 | D11 | **The position is a CHF payable** (the company owes francs), hedged by holding EUR | The franc's jump is a loss, which makes a clear storm story |
@@ -276,9 +276,9 @@ class Heard:                  # one successfully decoded packet
 | `START_DIALS` | (0, 3, 4, 5) | P3 | Default starting dial for channels 0–3 |
 | `DECISION_PERIOD_S` | 2.0 | P3 | How often `Adviser.decide` acts |
 | `MOVE_THRESHOLD` | 0.05 | P3 | The leader must beat us by at least this much before we move |
-| `STEP_FRACTION` | 0.2 | P3 | The fraction of the gap to the leader's dial moved per decision |
+| `STEP_FRACTION` | 0.5 | P3 | The fraction of the gap to the leader's dial moved per decision |
 | `SNAP_DISTANCE` | 0.1 | P3 | Within this distance, jump straight to the leader's dial |
-| `TRIAL_BARS` | 4 | P3 | Bars to wait before judging a move (8 h at 2-hour bars) |
+| `TRIAL_BARS` | 2 | P3 | Bars to wait before judging a move (4 h at 2-hour bars) |
 | `REVERT_MARGIN` | 0.05 | P3 | How much the gap may worsen before we revert |
 | `BLACKLIST_S` | 10.0 | P3 | Ignore a leader for this long after reverting a move towards it |
 | `LOST_AFTER_S` | 10.0 | P3 | Forget an adviser after this long without a packet |
@@ -705,7 +705,7 @@ class Peer:
 7. Start a trial: remember (old_dial = dial, leader channel, gap_at_move = leader.score − own.score,
    bars_at_move = bars processed so far). Set dial = new_dial and call hedger.set_half_life(4 · 2**dial).
 ```
-At the default speed, a move can happen about every 2 s. A gap of 2 steps closes to under half a step (the same chord) in about 6 moves (12 s), and is fully snapped in about 13 moves (27 s). The aftermath lasts about 65 s, so there's time to converge.
+At the default speed (1 bar/s), a move can happen about every 2 s. A gap of 2 steps closes to under half a step (the same chord) in 2 moves (about 4 s), and is fully snapped in about 5 moves (about 10 s). That matters because on the real data the strategies only separate clearly in the last ~25 s of the replay (21–23 January). Tuned in the simulation: with `STEP_FRACTION` 0.2 the advisers never reached one chord.
 
 ### 7.4 Trial and revert (D12)
 After `TRIAL_BARS` bars:
@@ -716,7 +716,7 @@ After `TRIAL_BARS` bars:
 
 **Why compare the gap, not the raw score:** when the market turns, every score drops together. A raw-score check would undo good moves every time the market turned. The gap to the leader cancels the market-wide swing.
 
-**Known limit:** the score is a 24-bar average, so after 4 bars only about 1/6 of the window reflects the new dial. Trials are weak evidence, which is why `REVERT_MARGIN` is generous. P3 tunes `TRIAL_BARS` in the simulation.
+**Known limit:** the score is a 24-bar average, so after 2 bars only about 1/12 of the window reflects the new dial. Trials are weak evidence, which is why `REVERT_MARGIN` is generous. P3 tunes `TRIAL_BARS` in the simulation.
 
 ### 7.5 Resilience (the Neptune North point)
 - **No peers heard:** `decide` finds only itself as a candidate, so it never moves. The adviser keeps hedging and playing on its own. Nothing breaks.
@@ -1145,7 +1145,7 @@ Each module has one test file, `backend/tests/test_<module>.py`. Tests MUST run 
 | | **No look-ahead** | For every t, `rH[t] == rS[t] − h_after(t−1) · rF[t]` exactly |
 | | **Edge cases** | `rS = rF` gives E → 1. Forcing `h = 0` gives E = 0. A huge outlier keeps h within [0, 2]. |
 | | **Matches the reference** | `Hedger` + `Effectiveness` give the same output as §6.4 `run()` to 1e−9 on the real data, for steps 0, 3 and 6 |
-| `test_adviser.py` | **Move** | A peer 0.1 ahead at dial 5, us at dial 0: after `decide`, dial = 1.0 and a trial has started |
+| `test_adviser.py` | **Move** | A peer 0.1 ahead at dial 5, us at dial 0: after `decide`, dial = `STEP_FRACTION` × 5 (2.5) and a trial has started |
 | | **No move** | A peer 0.03 ahead: the dial doesn't change |
 | | **Snap** | A peer at dial 3.05, us at 3.0: dial = 3.05 |
 | | **Revert** | Make the gap worsen by 0.1 after 16 bars: the dial is restored and the peer is blacklisted for 10 s |
