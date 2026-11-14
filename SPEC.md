@@ -302,6 +302,9 @@ class Heard:                  # one successfully decoded packet
 | `COUNT_IN_ONSET_DB` | 6.0 | P2 | Detector: energy at the click's partials must rise this far above its running median |
 | `COUNT_IN_TOL_S` | 0.08 | P2 | Detector: allowed error on each click spacing |
 | `COUNT_IN_FLOOR_S` | 1.0 | P2 | Detector: length of the running median (it needs half of this before it can fire) |
+| `MELODY_NOTE_MS` / `MELODY_SOUND_MS` / `MELODY_DECAY_MS` | 100 / 80 / 35 | P2 | Melody modem: one note's slot, sounding time and pluck decay (§9.6) |
+| `MELODY_SLOT_S` | 1.4 | P2 | One Mac's turn: 11 notes (1.1 s) plus guard; the cycle of four is 5.6 s |
+| `MELODY_GAIN_DB` | −12 | P2 | Melody level (chords −12, pilots −18) |
 | `CHORD_GAIN_DB` | −12 | P2 | Chord level (calibrated on the day) |
 | `PILOT_GAIN_DB` | −18 | P2 | Pilot level (calibrated on the day) |
 | `LOOP_HZ` | 20 | P4 | Main loop rate |
@@ -911,6 +914,15 @@ Higher speeds (5–7) are for skipping through calm periods. Convergence is tune
 - **Use:** for each peer heard on pilots, show "✓ heard" in the UI if that peer's chord template scores ≥ 0.6.
 - **Never used for decisions (D4).**
 
+### 9.6 Melody modem (`audio/melody.py`; optional, UI toggle, default off)
+The pilot tones (§9.1) are audible to many people. The melody modem sends the same 40-bit packet (§9.2) as 11 plucked notes of the A-major scale instead.
+- **Digits.** The 10 nibbles, read as one 40-bit number, are written in base 14 (14¹¹ > 2⁴⁰): 11 digits, one note each. Nibble 1 (reserved, 0 in pilots) carries the sender's channel. The CRC-8 is unchanged. Only adviser packets are sent.
+- **Notes.** 14 notes, B6 (1976 Hz) up to B8 (7902 Hz), A major, **without C♯8**: that note sits on a count-in click partial (§9.4). Everything is above the chords (stop at 1.8 kHz) and under 8 kHz. A note is a sine with a 4 ms attack and a 35 ms decay, 80 ms sounding in a 100 ms slot. Played at `MELODY_GAIN_DB` (−12), 6 dB above the pilots.
+- **Turns.** All Macs share one alphabet, so they take turns: channel *c* plays at the start of slot *k* where *k* mod 4 = *c*, slots `MELODY_SLOT_S` (1.4 s) long, counted from the moment the replay started (beat 4 of the count-in). One packet is 1.1 s long, so each Mac is heard once per 5.6 s (pilots: once per 1.5 s). A Mac that missed the count-in has the wrong slot clock and collides with the others.
+- **Decoding.** `MelodyDecoder` has the `Decoder` interface. Each 10 ms hop: power of the 3 bins around each note, strongest note, and its dB over the median note (≥ `MIN_TONE_DB`). A packet is 11 notes 10 hops apart whose digits give nibble 0 = 15, nibble 1 ≤ 3, type 0 and a good CRC. Packets from our own channel are dropped.
+- **Both are always decoded** (`Ears` in `app.py`), so Macs on different modems hear each other. The modem is chosen per Mac: `--modem pilot|melody` and the UI button.
+- **Count-in detector change.** A single note near a click partial looked like a click, so an onset now needs at least 3 of the 4 partials to rise together (each against its own median).
+
 ---
 
 ## 10. User interface
@@ -960,6 +972,7 @@ Not in v1: a list of every peer, or a debug spectrum view. Add them only if tuni
 // backend → UI, WS_HZ times a second
 { "type": "state", "bar": 894, "time": "2015-01-15T09:45:00Z",
   "speed": 4, "paused": false, "clock": "following",          // "conductor" | "following" | "free"
+  "modem": "pilot",                                           // "pilot" | "melody": what this Mac sends (§9.6)
   "adviser": { "channel": 1, "dial": 3.4, "step": 3, "chord": "D", "halfLifeHours": 10.6,
                "h": 0.62, "score": 0.71, "pnlUnhedgedPct": -14.2, "pnlHedgedPct": -12.9,
                "leaderChannel": 2, "heard": 3, "inTrial": true } }
@@ -967,6 +980,7 @@ Not in v1: a list of every peer, or a debug spectrum view. Add them only if tuni
 // UI → backend
 { "type": "control", "action": "start" }      // or "pause" or "reset"
 { "type": "speed", "step": 5 }                // 0–7
+{ "type": "modem", "mode": "melody" }         // or "pilot"; any Mac, not only the conductor
 
 // backend → UI, when a control is refused
 { "type": "error", "message": "following the conductor; controls disabled" }
@@ -1236,3 +1250,12 @@ Written by the P2 agents' PRs (#7 clock, #8 synth, #10 modem). They record where
 - The detector needs the follower to have been listening for 0.5 s before the first click. The smoke test waits 1.5 s before Start.
 - Speed changes after beat 4 are conductor-only and nobody follows them. A Mac started without `--conductor` cannot start by itself.
 - **Not tested on hardware:** real speaker and mic response at 2–6 kHz, hall noise, `DETECT_LAG_S`, and the real follower-to-conductor offset (loopback shows 1 bar at 20 Hz loop granularity).
+
+### Melody modem (`audio/melody.py`; branch `feat/melody-modem`)
+- Why: the pilots (14–19 kHz at −18 dB) were jarring in the room. Design and wire format are in §9.6. It is a per-Mac switch, off by default, so the demo can fall back to pilots.
+- In loopback: 0 dB SNR → 21 packets each way over a full replay (pilots: 64) with 2–3 bad CRCs (pilots: ~30). 30 packets through noise sized for a 0 dB pilot, at +6 dB signal: ≥ 28 decoded.
+- Cost: a Mac is heard every 5.6 s instead of every 1.5 s. The loopback adviser still converges; not measured with four Macs.
+- Turns need all Macs to start from the same count-in. At −3 dB the follower's count-in detection (3 dB margin, above) is the weak link, and a late follower collides with the conductor's turns.
+- Tests prove the count-in detector never fires on 60 random packets at 1.4 s cadence under −60 dBFS mic noise. With **digital silence** under it, the detector still fires (note leakage against a zero floor): not a real-mic case.
+- **Not tested on hardware:** speaker and mic response at 2–8 kHz, how it sounds in the hall, and slot alignment between two real Macs.
+- Four Macs in turn (6 cycles, 0 dB, slot clocks up to ±150 ms off): every Mac decoded all 18 packets from the other three, none crossed. With ±0.5 s clock error only about half got through, so the tolerance is roughly ±0.25 s (0.3 guard plus the 0.35 s into-slot start). Real two-Mac offset is untested.

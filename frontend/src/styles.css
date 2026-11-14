@@ -121,6 +121,8 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--moon); outl
 .dot i { display: block; border-radius: 50%; border: 1px solid rgba(243, 227, 195, 0.6); }
 .dot.on i { background: var(--moon); box-shadow: 0 0 10px rgba(243, 227, 195, 0.8); }
 .speed-label { margin-left: 10px; font-size: 9px; }
+.ctl-toggle { border: 1px solid rgba(201, 195, 255, 0.3); background: transparent; border-radius: 999px; padding: 10px 16px; min-height: 44px; }
+.ctl-toggle[aria-pressed="true"] { color: var(--moon); border-color: var(--moon); box-shadow: 0 0 10px rgba(243, 227, 195, 0.35); }
 .ctl-error { font-family: var(--serif); font-style: italic; color: #ffd3dc; font-size: 14px; }
 .ctl-time { font-size: 12px; letter-spacing: 0.12em; color: var(--dim); }
 

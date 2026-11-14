@@ -58,7 +58,7 @@ export default function App() {
       </main>
 
       <Controls paused={state?.paused ?? true} speed={state?.speed ?? 0} speeds={hello?.speeds ?? []}
-        conductor={conductor} clock={state?.clock ?? "following"} time={state?.time ?? ""} error={error} send={send} />
+        conductor={conductor} clock={state?.clock ?? "following"} modem={state?.modem ?? "pilot"} time={state?.time ?? ""} error={error} send={send} />
     </div>
   );
 }

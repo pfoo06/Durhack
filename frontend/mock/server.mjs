@@ -19,11 +19,12 @@ let pos = 0;
 let acc = 0;
 let paused = !follower;
 let speed = 4;
+let modem = "pilot";
 
 const wss = new WebSocketServer({ port: 8000, path: "/ws" });
 const frame = () => {
   const s = JSON.parse(lines[pos]);
-  return JSON.stringify({ ...s, speed, paused, clock: follower ? "following" : "conductor" });
+  return JSON.stringify({ ...s, speed, paused, modem, clock: follower ? "following" : "conductor" });
 };
 
 wss.on("connection", (ws) => {
@@ -33,6 +34,7 @@ wss.on("connection", (ws) => {
   ws.on("message", (raw) => {
     let msg;
     try { msg = JSON.parse(String(raw)); } catch { return; }
+    if (msg.type === "modem" && (msg.mode === "pilot" || msg.mode === "melody")) { modem = msg.mode; return; }
     if (follower) {
       ws.send(JSON.stringify({ type: "error", message: "following the conductor; controls disabled" }));
       return;

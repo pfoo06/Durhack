@@ -25,7 +25,7 @@ def test_messages_match_protocol(bars):
     hist = mac.history["bars"]
     assert hist[0]["S"] == pytest.approx(100.0) and hist[0]["time"] == hello["replayStart"]
     state = mac.state_message()
-    assert set(state) == {"type", "bar", "time", "speed", "paused", "clock", "adviser"}
+    assert set(state) == {"type", "bar", "time", "speed", "paused", "clock", "modem", "adviser"}
     assert set(state["adviser"]) == {"channel", "dial", "step", "chord", "halfLifeHours", "h", "score",
                                      "pnlUnhedgedPct", "pnlHedgedPct", "leaderChannel", "heard", "inTrial"}
     assert state["adviser"]["halfLifeHours"] == pytest.approx(app.C.H_MIN_BARS * 2**3 * app.C.BAR_MINUTES / 60)
@@ -61,3 +61,38 @@ def test_follower_starts_on_count_in(bars):
 def test_only_adviser_packets_are_sent(bars):
     mac = app.Mac(bars, 2, conductor=True)
     assert all(type(mac.next_packet()).__name__ == "AdviserPacket" for _ in range(3))
+
+
+def test_smoke_melody(bars):
+    assert app.run_smoke(bars, modem_mode="melody")
+
+
+def test_modem_switch_is_open_to_followers(bars):
+    follower = app.Mac(bars, 1, conductor=False)
+    assert follower.state_message()["modem"] == "pilot"
+    assert follower.handle({"type": "modem", "mode": "melody"}) is None and follower.state_message()["modem"] == "melody"
+    assert follower.handle({"type": "modem", "mode": "pilot"}) is None and follower.modem == "pilot"
+    assert follower.handle({"type": "modem", "mode": "x"}) is not None
+
+
+def test_melody_turns(bars):
+    mac = app.Mac(bars, 2, conductor=True, modem_mode="melody")
+    assert not mac.melody_due(2, 5.0)  # no replay yet
+    mac.slot_t0 = 10.0
+    slot = app.C.MELODY_SLOT_S
+    assert not mac.melody_due(2, 10.0 + slot)  # channel 1's turn
+    assert mac.melody_due(2, 10.0 + 2 * slot + 0.05) and not mac.melody_due(2, 10.0 + 2 * slot + 0.1)  # once per turn
+    assert not mac.melody_due(2, 10.0 + 2 * slot + 0.9)  # too late in the slot: skip it
+    assert mac.melody_due(2, 10.0 + 6 * slot + 0.05)  # the next cycle
+
+
+def test_mixed_modems_hear_each_other(bars):
+    room = app.LoopbackRoom(bars, 0.0, app.C.CHORD_GAIN_DB, app.C.PILOT_GAIN_DB, "melody")
+    room.macs[1].modem = "pilot"
+    dt = 1 / app.C.LOOP_HZ
+    while room.t < 1.5:
+        room.step(dt)
+    room.macs[0].handle({"type": "control", "action": "start"})
+    while room.t < 25:
+        room.step(dt)
+    assert all(d.stats["packets"] >= 3 for d in room.decoders)

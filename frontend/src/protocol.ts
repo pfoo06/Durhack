@@ -1,6 +1,7 @@
 // WebSocket message types. Mirror of SPEC §10.2 — change both together.
 
 export type ClockStatus = "conductor" | "following" | "free";
+export type Modem = "pilot" | "melody"; // how this Mac sends its strategy: high tones, or a quiet melody
 
 export interface HelloMsg {
   type: "hello";
@@ -48,6 +49,7 @@ export interface StateMsg {
   speed: number;
   paused: boolean;
   clock: ClockStatus;
+  modem: Modem;
   adviser: AdviserView;
 }
 
@@ -60,4 +62,5 @@ export type ServerMsg = HelloMsg | HistoryMsg | StateMsg | ErrorMsg;
 
 export type ClientMsg =
   | { type: "control"; action: "start" | "pause" | "reset" }
-  | { type: "speed"; step: number };
+  | { type: "speed"; step: number }
+  | { type: "modem"; mode: Modem };

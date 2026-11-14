@@ -1,4 +1,4 @@
-import type { ClientMsg, ClockStatus } from "../protocol";
+import type { ClientMsg, ClockStatus, Modem } from "../protocol";
 import { fmtTime } from "../theme";
 
 interface Props {
@@ -7,13 +7,14 @@ interface Props {
   speeds: number[];
   conductor: boolean;
   clock: ClockStatus;
+  modem: Modem;
   time: string;
   error: string | null;
   send: (m: ClientMsg) => void;
 }
 
 /** Start/Pause/Reset and speed. Enabled on the conductor or a `free` follower only (SPEC §10.1). */
-export function Controls({ paused, speed, speeds, conductor, clock, time, error, send }: Props) {
+export function Controls({ paused, speed, speeds, conductor, clock, modem, time, error, send }: Props) {
   const enabled = conductor || clock === "free";
   const tip = enabled ? undefined : "following the conductor";
   const setSpeed = (s: number) => send({ type: "speed", step: Math.max(0, Math.min(speeds.length - 1, s)) });
@@ -45,6 +46,11 @@ export function Controls({ paused, speed, speeds, conductor, clock, time, error,
           <span className="caps speed-label">{enabled ? `Speed ${speed} · ${speeds[speed] ?? 0} bars/s` : "Set by the conductor"}</span>
         </div>
       </div>
+      <button className="ctl-toggle caps" aria-pressed={modem === "melody"}
+        title="On: send strategy as a quiet melody. Off: send it as high pilot tones."
+        onClick={() => send({ type: "modem", mode: modem === "melody" ? "pilot" : "melody" })}>
+        Melody {modem === "melody" ? "on" : "off"}
+      </button>
       {error && <div className="ctl-error" role="status">{error}</div>}
       <div className="mono ctl-time">{time ? fmtTime(time) : "—"}</div>
     </footer>
