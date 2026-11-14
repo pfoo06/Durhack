@@ -64,6 +64,24 @@ class Hedger:
         return h_used, rH
 
 
+class PnL:
+    """Cumulative P&L of the CHF payable, in percent of the exposure (§6.3 step 6).
+
+    The company owes francs, so a rising franc (rS > 0) is a loss: each bar adds −rS·100
+    unhedged and −rH·100 hedged. Summing log returns is close enough for display.
+    """
+
+    def __init__(self) -> None:
+        self.unhedged_pct = 0.0
+        self.hedged_pct = 0.0
+
+    def update(self, rS: float, rH: float) -> tuple[float, float]:
+        """Add one bar and return `(unhedged_pct, hedged_pct)`, positive = gain."""
+        self.unhedged_pct += -rS * 100
+        self.hedged_pct += -rH * 100
+        return self.unhedged_pct, self.hedged_pct
+
+
 class Effectiveness:
     """Rolling hedge effectiveness E over a plain window of the last `window` bars."""
 

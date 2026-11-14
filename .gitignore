@@ -4,3 +4,5 @@ sensors/lid
 
 __pycache__/
 .claude/worktrees/
+data/raw/
+frontend/dist/

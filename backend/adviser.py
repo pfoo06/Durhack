@@ -16,7 +16,7 @@ from typing import Any
 
 from backend import config as C
 from backend.contracts import AdviserPacket, AdviserState, Bar, Heard
-from backend.finance import Effectiveness, Hedger
+from backend.finance import Effectiveness, Hedger, PnL
 
 # §8.3: the chord changes only when the dial is more than this far from the current step.
 STEP_HYSTERESIS = 0.6
@@ -41,22 +41,6 @@ class _Trial:
     leader: int
     gap_at_move: float
     bars_at_move: int
-
-
-class _PnL:
-    """Cumulative P&L in % of the exposure (§6.3 step 6).
-
-    Stand-in until `finance.PnL` lands (lane P1-C). Same interface, so swapping is one import.
-    """
-
-    def __init__(self) -> None:
-        self.unhedged_pct = 0.0
-        self.hedged_pct = 0.0
-
-    def update(self, rS: float, rH: float) -> tuple[float, float]:
-        self.unhedged_pct += -rS * 100
-        self.hedged_pct += -rH * 100
-        return self.unhedged_pct, self.hedged_pct
 
 
 def half_life_bars(dial: float) -> float:
@@ -88,7 +72,7 @@ class Adviser:
         self._seq = 0
         self._hedger = Hedger(half_life_bars(self.dial))
         self._effectiveness = Effectiveness(C.SCORE_WINDOW)
-        self._pnl = _PnL()
+        self._pnl = PnL()
         self._pnl_pct = (0.0, 0.0)
 
     # ----- per bar -------------------------------------------------------------------------

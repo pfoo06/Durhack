@@ -68,7 +68,7 @@ Use these words with exactly these meanings in code, comments, pull requests and
 | Term | Meaning |
 | --- | --- |
 | **Adviser** | One instance of the strategy logic. One per Mac (plus one optional fake neighbour, §4.8). Identified by its **channel**. |
-| **Bar** | One time step of the replay: **15 minutes** of market time. Weekend hours have no bars. |
+| **Bar** | One time step of the replay: **2 hours** of market time (`BAR_MINUTES = 120`; it was 15 minutes until the §6.4 sweep failed). Weekend hours have no bars. |
 | **Bar index `i`** | The bar's position in `data/chf2015.csv`, starting from 0. Absolute: it counts warm-up bars too. |
 | **Replay** | Playing bars from `REPLAY_START` to `REPLAY_END` at a chosen speed (bars per second of real time). |
 | **Warm-up** | Bars before `REPLAY_START`. Processed instantly and silently at startup, so the estimates are settled. |
@@ -82,7 +82,7 @@ Use these words with exactly these meanings in code, comments, pull requests and
 | **Step** | The dial rounded to a whole number 0–6, with hysteresis (§8.3). Picks the chord. |
 | **Half-life `H`** | How the dial turns into memory: `H = 4 · 2^dial` bars. After H bars, old data counts half as much. |
 | **λ (lambda)** | The decay per bar: `λ = 0.5^(1/H)`. |
-| **Score `E`** | Rolling hedge effectiveness over the last `W = 96` bars, from 0 to 1. Higher is better. |
+| **Score `E`** | Rolling hedge effectiveness over the last `W = SCORE_WINDOW = 24` bars (2 trading days), from 0 to 1. Higher is better. |
 | **Variance** | **Only** the statistic: how much a return series wobbles. Never use it to mean "how different the advisers are". |
 | **Spread** | How far apart the advisers' dials are (the largest minus the smallest). Convergence makes spread shrink. |
 | **Leader** | The adviser with the highest score among this one and every adviser it currently hears. |
@@ -110,7 +110,7 @@ Each line is settled. To change one, raise it with the whole team. Don't change 
 | D4 | **Data travels on pilot tones. Chords are never used for decisions.** | In unison every Mac plays the same chord, so chords can't tell advisers apart |
 | D5 | **The strategy has exactly one dimension: reaction speed (the dial).** | It maps cleanly to one root note, and convergence on a single dimension is easy to hear |
 | D6 | **Every adviser runs identical maths. Only the dial differs.** | Score differences then come from strategy alone |
-| D7 | **Score = rolling hedge effectiveness over a fixed 96-bar window, the same for everyone** | It's a standard measure, and comparable across advisers |
+| D7 | **Score = rolling hedge effectiveness over a fixed window (`SCORE_WINDOW`, 24 two-hour bars), the same for everyone** | It's a standard measure, and comparable across advisers |
 | D8 | **MVP convergence = step 20% towards the leader, with trial and revert** | Simple and easy to hear. Particle swarm optimisation comes after the MVP. |
 | D9 | **One conductor sends the replay clock. Followers fall back to their own timing if it's lost.** | Keeps the room in sync without a network |
 | D10 | **Everything stays in A major** (one chord per dial step) | Moving between strategies still sounds musical |
@@ -277,7 +277,7 @@ class Heard:                  # one successfully decoded packet
 | `MOVE_THRESHOLD` | 0.05 | P3 | The leader must beat us by at least this much before we move |
 | `STEP_FRACTION` | 0.2 | P3 | The fraction of the gap to the leader's dial moved per decision |
 | `SNAP_DISTANCE` | 0.1 | P3 | Within this distance, jump straight to the leader's dial |
-| `TRIAL_BARS` | 16 | P3 | Bars to wait before judging a move |
+| `TRIAL_BARS` | 4 | P3 | Bars to wait before judging a move (8 h at 2-hour bars) |
 | `REVERT_MARGIN` | 0.05 | P3 | How much the gap may worsen before we revert |
 | `BLACKLIST_S` | 10.0 | P3 | Ignore a leader for this long after reverting a move towards it |
 | `LOST_AFTER_S` | 10.0 | P3 | Forget an adviser after this long without a packet |
@@ -292,7 +292,7 @@ class Heard:                  # one successfully decoded packet
 | `RAMP_MS` | 5 | P2 | Raised-cosine fade at each tone edge |
 | `MIN_TONE_DB` | 10.0 | P2 | A tone counts only if it's this far above the channel median |
 | `SPEED_BARS_PER_S` | (0, 1, 2, 4, 8, 16, 32, 64) | P2 | Bars per second for speed steps 0–7 |
-| `DEFAULT_SPEED_STEP` | 4 | P2 | 8 bars per second |
+| `DEFAULT_SPEED_STEP` | 1 | P2 | 1 bar per second: the 119-bar replay takes about 2 minutes |
 | `FOLLOW_JUMP_BARS` | 8 | P2 | Bigger errors than this jump or hold, smaller ones trim (§9.4) |
 | `FOLLOW_TRIM` | 0.10 | P2 | Maximum ±10% speed adjustment while following |
 | `RESET_BACK_BARS` | 96 | P2 | If the conductor is this far behind us, treat it as a reset |
@@ -422,21 +422,26 @@ def on_heard(heard):                                     # runs on the asyncio l
 ## 5. Data
 
 ### 5.1 Source
-- **HistData.com**, free "ASCII / 1-minute bar" files. Download by hand from their website (it requires clicking through, so it can't be scripted).
-- You need **January 2015** files for three pairs: **EURCHF**, **EURGBP** and **GBPCHF**.
-- Each download is a zip holding one CSV named like `DAT_ASCII_EURCHF_M1_201501.csv`.
-- **Format:** semicolons, no header, one row per minute:
+- **Dukascopy** free 1-minute bid bars, downloaded with the `dukascopy-node` command-line tool. (HistData was the first plan, but its downloads were blocked on the team's work laptops.)
+- You need **January 2015** for three pairs: **EURCHF**, **EURGBP** and **GBPCHF**. From `data/raw/`, run once per pair:
   ```
-  20150115 043000;1.201050;1.201100;1.201000;1.201050;0
-  date time      ;open    ;high    ;low     ;close   ;volume (always 0)
+  npx -y dukascopy-node -i <pair> -from 2015-01-01 -to 2015-02-01 -t m1 -f csv
   ```
-- ⚠️ **Timezone:** HistData times are **EST without daylight saving, always UTC−5**. Add 5 hours to get UTC. The shock appears at `20150115 043000` in the raw files, which is 09:30 UTC.
-- **Licence:** check HistData's terms before committing raw files. Raw files go in `data/raw/`, which **is gitignored**. Only the prepared `data/chf2015.csv` (about 150 KB) is committed.
-- **Fallback** if HistData fails: European Central Bank daily reference rates (a free CSV). It's daily only, so set `BAR_MINUTES` to 1440 and accept a less dramatic replay. Treat this as a last resort.
+  Each run writes `download/<pair>-m1-bid-2015-01-01-2015-02-01.csv`.
+- **Format:** a header row, then one row per minute. `timestamp` is milliseconds since the epoch, **already UTC**:
+  ```
+  timestamp,open,high,low,close
+  1421314200000,1.2009,1.2009,1.2009,1.2009
+  ```
+- ⚠️ **Closed-market filler:** Dukascopy writes a row for every minute, **including when the market is shut** (Sunday daytime and 1 January), repeating the last price. Those rows MUST be dropped (§5.2 step 1), or they look like hours of perfect calm. Don't drop every unchanged minute: EUR/CHF genuinely sat still for long stretches while the floor held.
+- **Licence:** Dukascopy's redistribution terms are unchecked. Raw files go in `data/raw/`, which **is gitignored**. Only the prepared `data/chf2015.csv` (about 210 KB) is committed.
+- **Fallback:** European Central Bank daily reference rates (a free CSV). It's daily only, so set `BAR_MINUTES` to 1440 and accept a less dramatic replay. Treat this as a last resort.
 
 ### 5.2 Preparation (`scripts/prepare_data.py`, run once by P1)
 Run it as `python scripts/prepare_data.py data/raw/ data/chf2015.csv`. It MUST:
-1. Read the three CSVs. Parse `date time` as `%Y%m%d %H%M%S`, add 5 hours, and make the result timezone-aware UTC. Keep **only the close** price.
+1. Read the three CSVs. Parse `timestamp` as milliseconds, timezone-aware UTC. Keep **only the close** price. Then keep only:
+   - minutes from **2 January 2015** (1 January is a holiday) up to, not including, **24 January 2015** (the end of the replay week);
+   - minutes when the market is open: **Sunday 22:00 ≤ t < Friday 22:00 UTC** (§5.3).
 2. Resample each pair to `BAR_MINUTES` buckets, labelled by **bucket start**, taking the **last close in the bucket**: `df.resample("15min", label="left", closed="left").last()`.
 3. **Inner-join** the three pairs on time. **Drop** any bucket where a pair has no data. **Never forward-fill**: filling in missing data creates fake zero returns, which distort variance.
 4. Compute:
@@ -450,18 +455,18 @@ Run it as `python scripts/prepare_data.py data/raw/ data/chf2015.csv`. It MUST:
 8. **Print and assert these checks:**
    - Row count is between 1,400 and 1,700.
    - The first row is on 2 January 2015.
-   - There's at least one row on or before `REPLAY_START`, and one on or after `REPLAY_END`.
+   - There's at least one row on or before `REPLAY_START`, and the replay's last bar exists (the bar starting at `REPLAY_END` − `BAR_MINUTES`, because the market closes at `REPLAY_END`).
    - The bar containing `SHOCK_TIME` exists and has `|rS| > 0.03`.
    - Outside 15 January, `|eurchf − F/S| / eurchf < 0.005`. This proves S and F were built the right way round.
    - Print the largest five `|rS|` with their times. They MUST be on 15 January.
 
-### 5.3 Size and timing of the data (expected; the script confirms)
+### 5.3 Size and timing of the data (confirmed by the script on the Dukascopy data)
 | | Bars | Note |
 | --- | --- | --- |
-| Warm-up, 2 to 11 January | about 568 | More than 2 × the longest half-life (256 bars), so every estimate has settled |
-| Replay, 12 to 23 January | about 952 | 472 bars in week 1, then 480 in week 2 |
-| Shock | bar about 326 of the replay | Thursday, 3 days and 9.5 hours into the replay |
-| Total | about 1,520 | Fits the 12-bit bar field in clock packets (maximum 4,095) |
+| Warm-up, 2 January to 11 January | 72 | 11 on Friday 2 January, 60 in the week of 4 January, 1 on Sunday evening 11 January. Only about 1 × the longest half-life (64 bars): the slowest strategy hasn't fully settled. Fine for the proof of concept; download December 2014 to fix it. |
+| Replay, 12 to 23 January | 119 (bar indexes 72 to 190) | 59 bars in week 1, then 60 in week 2 |
+| Shock | bar 40 of the replay (index 112, the 08:00–10:00 bar) | Thursday 15 January. `rS` = 0.268 on the shock bar. |
+| Total | 191 | Fits the 12-bit bar field in clock packets (maximum 4,095). At the default 8 bars/s the replay lasts about 15 s, so `SPEED_BARS_PER_S` (P2) needs slowing for the ~2-minute arc in §1. |
 
 **FX market hours:** the market is open from Sunday 22:00 UTC to Friday 22:00 UTC. Hours with no trading have no bars. Half-lives count **bars, not calendar time**, so weekends don't decay anyone's memory.
 
@@ -489,13 +494,13 @@ The variance maths below uses `rH = rS − h·rF`. The minus sign in front doesn
 
 | Step | H (bars) | H (trading hours) | Character |
 | --- | --- | --- | --- |
-| 0 | 4 | 1 | Reacts within the hour |
-| 1 | 8 | 2 | |
-| 2 | 16 | 4 | |
-| 3 | 32 | 8 | About one trading session |
-| 4 | 64 | 16 | |
-| 5 | 128 | 32 | |
-| 6 | 256 | 64 | About 2.7 trading days |
+| 0 | 1 | 2 | Reacts within a couple of hours |
+| 1 | 2 | 4 | |
+| 2 | 4 | 8 | About one trading session |
+| 3 | 8 | 16 | |
+| 4 | 16 | 32 | |
+| 5 | 32 | 64 | |
+| 6 | 64 | 128 | About 5 trading days |
 
 - **The dial is the only thing that differs between advisers (D6).** The data, every formula, `W` and every constant are identical.
 - Changing the dial calls `Hedger.set_half_life(H)`. This changes `λ` **from the next bar on**. The existing `cov` and `var` estimates are **kept**: the adviser keeps its own memory and just starts forgetting at a different rate. A move doesn't copy the leader's `h`, only its reaction speed.
@@ -594,6 +599,18 @@ An adviser still hedging as if the old relationship held does **worse than not h
    - Score gaps open up beyond `MOVE_THRESHOLD`. Advisers hear the leader and move towards it, and the room converges.
    - *Which* dial leads is for the sweep to tell us. It may be Jumpy or a middle dial. Don't hard-code an expectation.
 
+#### Sweep result (2026-11-14, Dukascopy data)
+With **15-minute bars the sweep failed**: after the shock the EUR–CHF link at 15 minutes is so weak (correlation 0.99 → 0.21) that every strategy scored under 0.07, and the aftermath gap among `START_DIALS` was 0.052 < 0.10. Wider dial ladders didn't help. **Two-hour bars pass** (`BAR_MINUTES = 120`, `H_MIN_BARS = 1`, `SCORE_WINDOW = 24`, `RHO_WINDOW = 12`):
+
+| Step | H (bars) | Calm | Storm | Aftermath |
+| --- | --- | --- | --- | --- |
+| 0 | 1 | 0.948 | 0.000 | 0.306 |
+| 3 | 8 | 0.951 | 0.000 | 0.164 |
+| 4 | 16 | 0.951 | 0.000 | 0.086 |
+| 5 | 32 | 0.950 | 0.000 | 0.061 |
+
+Calm gap 0.003 (PASS), aftermath gap 0.245 (PASS), leader changes from step 4 to step 0 (PASS). Aftermath scores stay under about 0.35, so the converged chord stays somewhat dissonant (§8.2): the euro genuinely stopped hedging the franc. Elsewhere in this section, read "96 bars" as `SCORE_WINDOW`.
+
 #### What the sweep MUST show (pass criteria)
 `tools/sweep.py` runs each of the 7 steps **alone** through warm-up and replay, then prints a table of mean E per step for three phases:
 - calm: replay start to the shock;
@@ -690,7 +707,7 @@ After `TRIAL_BARS` bars:
 
 **Why compare the gap, not the raw score:** when the market turns, every score drops together. A raw-score check would undo good moves every time the market turned. The gap to the leader cancels the market-wide swing.
 
-**Known limit:** the score is a 96-bar average, so after 16 bars only about 1/6 of the window reflects the new dial. Trials are weak evidence, which is why `REVERT_MARGIN` is generous. P3 tunes `TRIAL_BARS` in the simulation.
+**Known limit:** the score is a 24-bar average, so after 4 bars only about 1/6 of the window reflects the new dial. Trials are weak evidence, which is why `REVERT_MARGIN` is generous. P3 tunes `TRIAL_BARS` in the simulation.
 
 ### 7.5 Resilience (the Neptune North point)
 - **No peers heard:** `decide` finds only itself as a candidate, so it never moves. The adviser keeps hedging and playing on its own. Nothing breaks.
@@ -873,14 +890,16 @@ else:                          trim = 1 + clamp(err / FOLLOW_JUMP_BARS, −1, 1)
 - **Startup:** a follower starts `free` and **paused** at `replay_start`. The first clock packet it hears starts it.
 - **Controls on a follower:** while `following`, the follower ignores start, pause, reset and speed from its own UI (the UI shows them disabled). While `free`, it accepts them.
 
-**Time conversions at the default speed (step 4, 8 bars per second):**
+**Time conversions at the default speed (step 1, 1 bar per second, 2-hour bars):**
 | Thing | Bars | Real time |
 | --- | --- | --- |
-| 1 bar | 1 | 0.125 s |
-| 1 trading hour | 4 | 0.5 s |
-| 1 trading day (= W) | 96 | 12 s |
-| One packet cycle | about 15 | 1.9 s |
-| Decision period / trial | 16 | 2 s |
+| 1 bar | 1 | 1 s |
+| 1 trading day | 12 | 12 s |
+| Score window W (2 trading days) | 24 | 24 s |
+| One packet cycle | about 2 | 1.9 s |
+| Decision period | about 2 | 2 s |
+| Trial | 4 | 4 s |
+| Whole replay | 119 | about 2 minutes (shock at about 0:40) |
 | Lost timeout | 80 | 10 s |
 | Whole replay | about 952 | about 119 s |
 | Start to shock | about 326 | about 41 s |
