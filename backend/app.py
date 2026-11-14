@@ -173,7 +173,9 @@ class Mac:
             self.adviser.on_heard(heard)
 
     def on_count_in(self, lag: float = 0.0) -> None:  # COUNT-IN: heard another Mac's beat 4, `lag` s ago
-        if self.clock.on_count_in(lag):  # False for our own echo
+        ok = self.clock.on_count_in(lag)  # False for our own echo, or when already running
+        log.info("count-in heard on channel %d: %s", self.channel, "starting" if ok else "ignored")
+        if ok:
             self.paused = False
 
     # --- UI ---

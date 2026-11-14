@@ -881,7 +881,7 @@ return Tick(bars[position : position + n], reset=<pending reset flag, cleared>)
 - Pause, reset and speed apply to this Mac only. Speed changes made after beat 4 are not followed by anyone else.
 - Status is always `free`.
 
-**Hearing a count-in (every Mac):** `on_count_in(lag)`: unless in the deaf window, reset, `speed_step = DEFAULT_SPEED_STEP`, run now, already `lag` seconds in. Returns False when ignored. Until a Mac starts or hears a count-in it sits paused at `REPLAY_START`. If two Macs press Start together, each ignores the other's count-in (both are deaf) and they start about one count-in apart; press Start on one Mac only.
+**Hearing a count-in (every Mac):** `on_count_in(lag)`: unless in the deaf window or already running (a false detection must not restart a running replay; Reset or Pause a Mac to let it take a new count-in), reset, `speed_step = DEFAULT_SPEED_STEP`, run now, already `lag` seconds in. Returns False when ignored. Until a Mac starts or hears a count-in it sits paused at `REPLAY_START`. If two Macs press Start together, each ignores the other's count-in (both are deaf) and they start about one count-in apart; press Start on one Mac only.
 
 **The click** (`countin.clicks()`): 4 Hann-windowed bursts of `COUNT_IN_CLICK_MS`, `COUNT_IN_INTERVAL_S` apart, each the sum of four sine partials at 2.8, 3.6, 4.4 and 5.2 kHz. All energy is inside `COUNT_IN_BAND_HZ`; nothing above 8 kHz (the synth rule). Peak 1.0 before gain.
 

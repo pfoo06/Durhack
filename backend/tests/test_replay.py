@@ -92,4 +92,7 @@ def test_ignores_own_count_in() -> None:
     c.tick(0.0)
     assert not c.on_count_in()  # our own beat 4 coming back through the mic
     c.tick(COUNT_S + config.COUNT_IN_DEAF_S + 0.1)
-    assert c.on_count_in()  # a later one from another Mac restarts us
+    assert not c.on_count_in()  # running: a stray count-in must not restart us
+    c.reset()
+    c.tick(0.0)
+    assert c.on_count_in()  # idle: a later one from another Mac starts us
