@@ -278,6 +278,9 @@ class Heard:                  # one successfully decoded packet
 | `STEP_FRACTION` | 0.5 | P3 | The fraction of the gap to the leader's dial moved per decision |
 | `SNAP_DISTANCE` | 0.1 | P3 | Within this distance, jump straight to the leader's dial |
 | `TRIAL_BARS` | 2 | P3 | Bars to wait before judging a move (4 h at 2-hour bars) |
+| `EXPLORE_PROB` | 0.1 | P3 | Chance per decision that a struggling adviser with nobody to follow tries a nearby dial (§7.5a) |
+| `EXPLORE_STEP` | 0.3 | P3 | Size of that try. Under the 0.6 step hysteresis, so a try alone doesn't change the chord |
+| `EXPLORE_BELOW` | 0.8 | P3 | Only explore while own score is under this, so the calm harmony is untouched |
 | `REVERT_MARGIN` | 0.05 | P3 | How much the gap may worsen before we revert |
 | `BLACKLIST_S` | 10.0 | P3 | Ignore a leader for this long after reverting a move towards it |
 | `LOST_AFTER_S` | 10.0 | P3 | Forget an adviser after this long without a packet |
@@ -729,6 +732,15 @@ After `TRIAL_BARS` bars:
 - **No peers heard:** `decide` finds only itself as a candidate, so it never moves. The adviser keeps hedging and playing on its own. Nothing breaks.
 - **One Mac switched off mid-demo:** it's marked lost after `LOST_AFTER_S`, and the others carry on with whoever they can still hear.
 - **The starter switched off:** the other Macs carry on at the last speed (§9.4).
+
+### 7.5a Exploration (fights herding, §15)
+In step 4 or 5 of §7.3 (nobody worth following), an adviser **explores** with probability `EXPLORE_PROB` if:
+- it currently hears at least one peer (an adviser alone never moves, §13), and
+- its own score is under `EXPLORE_BELOW` (so the calm harmony never changes).
+
+It moves its dial by ±`EXPLORE_STEP` (random sign, clamped to 0–6) and starts a normal trial against the best peer it hears. After `TRIAL_BARS` it's judged like any move (§7.4): if the gap to that peer got worse by more than `REVERT_MARGIN`, it goes back, **without** blacklisting the peer. The random generator is seeded by channel, so runs repeat.
+
+Why: once every adviser has converged there's no variety left, and if the market changed again they'd all be wrong together. Exploring keeps a little variety while things are going badly. On the real data it also lifts the mean aftermath score (`backend.sim`, seeds 0–4: 0.19–0.20 against 0.17 without exploring, at 10% loss), and every run still ends on step 0.
 
 ### 7.6 Offline simulation (`backend/sim.py`, lane P3-C)
 - Creates N advisers (default 4, dials from `START_DIALS`), runs warm-up, then the replay at `SPEED_BARS_PER_S[--speed]`, keeping simulated time as `t = bars_done / speed`.
@@ -1212,7 +1224,7 @@ Rehearse at the real speed. If the shock arrives too late, raise the speed durin
 | Followers start late or not at all | A follower stays paused after Start, or is more than 1 bar behind | Raise `COUNT_IN_GAIN_DB`, lower `COUNT_IN_ONSET_DB`, check `DETECT_LAG_S`; move the follower closer; press Start again |
 | The macOS mic permission is missing | No audio input, or all zeros | Grant it to the terminal app (§4.8). Check after every restart. |
 | The audio callback overruns | `stats()["xruns"]` rising | Remove work from the callback. Raise `BLOCK` to 960. |
-| Herding: everyone converges on one strategy | Shown in the demo | It's a known limitation. Mention it in the pitch, along with the post-MVP diversity ideas (§7.7). |
+| Herding: everyone converges on one strategy | Shown in the demo | Exploration (§7.5a) keeps some variety while scores are poor. Mention the trade-off in the pitch. |
 
 ---
 

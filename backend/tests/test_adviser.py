@@ -260,3 +260,47 @@ def test_snapshot_restore() -> None:
     assert a.peers == {} and a.trial is None
     a.restore(snap)  # reusable
     assert a.state() == before
+
+
+# ----- exploration (§7.5a) -----------------------------------------------------------------
+
+
+def test_explores_when_struggling_with_nobody_to_follow(monkeypatch) -> None:
+    monkeypatch.setattr(C, "EXPLORE_PROB", 1.0)
+    a = Adviser(1, 3.0)
+    a.score = 0.0
+    hear(a, 2, 0.0, 4.0, at=100.0)  # a peer, but nobody is ahead
+    a.decide(100.0)
+    assert abs(abs(a.dial - 3.0) - C.EXPLORE_STEP) < 1e-9
+    assert a.trial is not None and a.trial.explore and a.trial.leader == 2
+
+
+def test_no_exploration_while_scoring_well(monkeypatch) -> None:
+    monkeypatch.setattr(C, "EXPLORE_PROB", 1.0)
+    a = Adviser(1, 3.0)
+    a.score = C.EXPLORE_BELOW
+    hear(a, 2, C.EXPLORE_BELOW, 4.0, at=100.0)
+    a.decide(100.0)
+    assert a.dial == 3.0 and a.trial is None
+
+
+def test_no_exploration_alone(monkeypatch) -> None:
+    monkeypatch.setattr(C, "EXPLORE_PROB", 1.0)
+    a = Adviser(1, 3.0)
+    a.score = 0.0
+    a.decide(100.0)
+    assert a.dial == 3.0 and a.trial is None
+
+
+def test_bad_exploration_reverts_without_blacklisting(monkeypatch) -> None:
+    monkeypatch.setattr(C, "EXPLORE_PROB", 1.0)
+    a = Adviser(1, 3.0)
+    a.score = 0.0
+    hear(a, 2, 0.0, 4.0, at=100.0)
+    a.decide(100.0)
+    monkeypatch.setattr(C, "EXPLORE_PROB", 0.0)
+    advance(a, C.TRIAL_BARS)
+    hear(a, 2, 0.2, 4.0, at=102.5)  # the peer is now 0.2 ahead: the try made us fall behind
+    a.decide(102.5)
+    assert a.dial == 3.0 and a.trial is None
+    assert 2 in a.peers and not a.blacklist
