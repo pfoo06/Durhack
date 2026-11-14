@@ -797,137 +797,226 @@ Every parameter is a smooth function of E, so the sound changes gradually rather
 
 | Type | Payload (16 bits) |
 | --- | --- |
-| Adviser | score byte `round(E·255)`, then dial byte `round(dial/6·255)` |
-| Clock | bar index (12 bits, must be < 4096), then speed step (4 bits, 0–7) |
+| Backend | Python 3.11+, FastAPI + uvicorn (WebSocket), numpy, pandas, scipy, sounddevice |
+| Frontend | React + Vite, one charting library (e.g. Recharts) |
+| Data prep | A one-off pandas script that writes a small CSV the backend loads at startup |
 
-- **CRC-8:** polynomial `0x07`, initial value `0x00`, no reflection, no final XOR (CRC-8/SMBUS). **Check value:** `crc8(b"123456789") == 0xF4`. Write it in about 8 lines. No library.
-- **The channel isn't in the bits.** It's the frequency band the packet arrived on.
-
-**Timing of each symbol:** 100 ms of tone (with 5 ms raised-cosine fades in and out), then 60 ms of silence. One packet is 10 × 160 ms = **1.6 s**, then 300 ms idle. `encode` returns all of it, including the idle tail.
-
-### 9.3 Decoding (reference algorithm; P2 MAY improve it if the tests still pass)
-Analysis runs every `HOP` (10 ms) on the latest `FFT_N` samples (42.7 ms):
-1. `spec = |rfft(frame · hann(2048))|²`.
-2. For each channel except our own, read the 16 tone bins `e[k] = spec[bin(c, k)]`.
-3. `best = argmax(e)`. The level above the floor is `snr = 10·log10(e[best] / median(e))`.
-4. The hop's reading for that channel is `best` if `snr ≥ MIN_TONE_DB`, else **none**. Store `(time, reading, snr)` for each channel for the last 3 s.
-
-**A small state machine per channel:**
-- **SEARCH:**
-  - Look for a run of at least 3 consecutive hops reading **15**, followed by a hop that doesn't read 15.
-  - Take the **midpoint** of the run as the centre of symbol 0, `t_mid0`.
-  - The midpoint is used because echoes in the hall only extend the *end* of a run, so the midpoint moves by at most half the echo length. The timing tolerance is ±28 ms.
-- **COLLECT:**
-  - For `k = 1..9`, the expected centre of symbol k is `t_mid0 + k × 0.160 s`.
-  - Use the hop whose window centre is nearest to it. If its reading is none, the packet fails: go back to SEARCH.
-- **CHECK:**
-  - Symbol 1 must be 0.
-  - The type must be 0 or 1.
-  - The CRC must match.
-  - The clock bar must be < 4096 and the speed ≤ 7.
-  - If everything passes, emit `Heard`. `received_at = t_mid0 + 9 × 0.160 + 0.050` (the end of the last tone), and `snr_db` is the mean snr of the 10 symbols. Then go back to SEARCH.
-
-**Robustness checklist:**
-- Raw mic input (§4.8). No band-pass filter is needed, because only pilot bins are read.
-- Ignore our own channel (we hear ourselves loudly).
-- Count, per channel: packets decoded, sync found but failed, and CRC failures. Log them every 10 s and expose them through `Engine.stats()`.
-- **Upgrade path, only if more than 20% of packets are lost in the hall:**
-  1. Send each packet twice.
-  2. Then add Hamming(7,4) error correction (a contract change).
-
-### 9.4 Shared replay clock (`replay.py`)
-**The state:** `position` (float, absolute bar index), `speed_step`, `paused`, `trim` (starts at 1.0), `last_clock_at`.
-
-**`tick(dt)`:**
+### Components and data flow
 ```
-rate = SPEED_BARS_PER_S[speed_step] · trim   (0 if paused)
-new = min(position + rate·dt, replay_end + 0.999)
-bars = all bars with index in (floor(position), floor(new)], capped at 200 per tick
-position = new  (or less, if capped: carry on next tick)
-return Tick(bars, reset=<pending reset flag, then clear it>)
+                       ┌──────────── backend (one Python process) ─────────────────────────┐
+ data/chf2015.csv ──▶  │ data.load_bars ──▶ replay.Clock ──bar──▶ adviser.Adviser          │
+                       │                       ▲   ▲               │  uses finance.*    │
+                       │       ClockPacket ────┘   │               │                    │
+                       │                     speed (UI)            ▼ AdviserState       │
+                       │                                   app (state hub) ──▶ WebSocket ──▶ React
+                       │                                      │       ▲                   │
+                       │            AdviserPacket / ClockPacket│       │ Heard[]          │
+                       │                                      ▼       │                   │
+                       │  audio.engine ◀── synth.Synth (chord)   modem.Decoder ◀── mic    │
+                       │      │      ◀── modem.encode (pilot)         ▲                   │
+                       │      └──▶ speaker                    mic frames (queue)          │
+                       └────────────────────────────────────────────────────────────────────┘
 ```
-- `start()` unpauses at the current `speed_step`. On the conductor, start re-sends the last non-zero speed.
-- `pause()` sets paused. On the conductor, it broadcasts `speed_step = 0`.
-- `reset()` sets `position = replay_start` and flags a reset for the next tick.
 
-**The conductor:**
-- `packet()` returns `ClockPacket(bar=floor(position), speed_step=0 if paused else speed_step)`.
-- Its status is always `conductor`. It ignores clock packets it hears.
+### Contracts (`backend/contracts.py`)
+These dataclasses are the **only** things that cross between workstreams. They're **frozen at +1h**. After that, changing one needs a pull request approved by the owner of every workstream that uses it.
 
-**Followers: `on_clock(heard, now)`:**
+```python
+from dataclasses import dataclass
+from datetime import datetime
+
+@dataclass(frozen=True)
+class Bar:            # one replay step, produced by data / replay
+    i: int            # bar index from the start of the data file
+    time: datetime
+    S: float          # GBP value of 1 CHF
+    F: float          # GBP value of 1 EUR
+    rS: float         # log return of S
+    rF: float         # log return of F
+    rho: float        # rolling correlation of rS, rF (96 bars), for the chart
+
+@dataclass
+class AdviserState:   # produced by adviser, read by app, synth and UI
+    channel: int
+    dial: float       # continuous, 0.0–6.0
+    step: int         # round(dial), 0–6, the chord
+    half_life_bars: float
+    h: float          # current hedge ratio
+    score: float      # rolling effectiveness E, 0–1
+    pnl_hedged: float
+    pnl_unhedged: float
+
+@dataclass(frozen=True)
+class AdviserPacket:  # what goes over the air about an adviser
+    channel: int; seq: int; score: float; dial: float
+
+@dataclass(frozen=True)
+class ClockPacket:    # what the conductor sends
+    channel: int; seq: int; bar: int; speed_step: int
+
+@dataclass(frozen=True)
+class Heard:          # what the decoder reports
+    packet: AdviserPacket | ClockPacket
+    snr_db: float
+    received_at: float  # time.monotonic() when the packet ENDED
 ```
-p = heard.packet
-est = p.bar + SPEED_BARS_PER_S[p.speed_step] · (1.54 + (now − heard.received_at))
-        # 1.54 s = time from encoding the packet to the end of its last tone
-speed_step = p.speed_step; paused = (p.speed_step == 0)
-status = "following"; last_clock_at = now
-err = est − position
-if   err < −RESET_BACK_BARS:   reset(); position = replay_start; then fast-forward to est
-                               # the conductor was reset
-elif err > FOLLOW_JUMP_BARS:   position stays; set a catch-up target = est
-                               # tick returns the skipped bars (≤ 200 per tick)
-elif err < −FOLLOW_JUMP_BARS:  trim = 0 until err ≥ −1   # hold: never un-process bars
-else:                          trim = 1 + clamp(err / FOLLOW_JUMP_BARS, −1, 1) · FOLLOW_TRIM
-```
-- **Clock lost:** if `now − last_clock_at > CLOCK_LOST_S`, the status becomes `free`, trim resets to 1.0, and the Mac **keeps the last speed**. When a clock packet arrives again, it re-locks using the same rules.
-- **Startup:** a follower starts `free` and **paused** at `replay_start`. The first clock packet it hears starts it.
-- **Controls on a follower:** while `following`, the follower ignores start, pause, reset and speed from its own UI (the UI shows them disabled). While `free`, it accepts them.
 
-**Time conversions at the default speed (step 4, 8 bars per second):**
-| Thing | Bars | Real time |
+### Module interfaces
+| Module | Interface | Owner |
 | --- | --- | --- |
-| 1 bar | 1 | 0.125 s |
-| 1 trading hour | 4 | 0.5 s |
-| 1 trading day (= W) | 96 | 12 s |
-| One packet cycle | about 15 | 1.9 s |
-| Decision period / trial | 16 | 2 s |
-| Lost timeout | 80 | 10 s |
-| Whole replay | about 952 | about 119 s |
-| Start to shock | about 326 | about 41 s |
+| `data.py` | `load_bars(path) -> list[Bar]` | P1 |
+| `finance.py` | `Hedger(half_life_bars).update(bar) -> (h_prev, r_hedged)`, `set_half_life(bars)`; `Effectiveness(window=96).update(rS, rH) -> float` | P1 |
+| `adviser.py` | `Adviser(channel, start_dial)`: `on_bar(bar) -> AdviserState`, `on_heard(heard: Heard)`, `decide(now) -> None`, `packet() -> AdviserPacket` | P1 |
+| `audio/modem.py` | `encode(packet) -> np.ndarray[float32]` (48 kHz mono); `Decoder(own_channel).feed(frames) -> list[Heard]` | P2 |
+| `audio/engine.py` | `Engine(synth, on_frames)`: a full-duplex `sounddevice` stream. `send(samples)` queues pilot audio. Mic frames go to `on_frames` **outside** the audio callback. | P2 |
+| `replay.py` | `Clock(bars, conductor: bool)`: `tick(dt) -> list[Bar]` (the bars passed since the last tick), `set_speed(step)`, `on_clock(heard)`, `status -> "conductor" \| "following" \| "free"`, `packet() -> ClockPacket` | P2 |
+| `audio/synth.py` | `Synth()`: `set(step: int, score: float)`, `render(n) -> np.ndarray[float32]`. It must be real-time safe: no allocation-heavy work and no locks inside `render`. | P3 |
+| `audio/chords.py` | (stretch goal) `ChordListener().feed(frames) -> int \| None` (the chord step heard) | P3 |
+| `app.py` | FastAPI app, `/ws`, the main loop and the wiring. **Only P4 edits this file.** | P4 |
+| `mocks.py` | `VirtualRoom(loss=0.1, delay_s=1.5)`, see below | P1 + P2 |
 
-Higher speeds (5–7) are for skipping through calm periods. Convergence is tuned for speed 4. At speed 7 information goes stale before it's used, so expect less convergence.
+### Threads and timing
+- **Audio callback** (sounddevice, about every 10 ms): `out = synth.render(n) + next pilot samples`. It copies the mic frames into a queue and returns. **No FFTs and no I/O in the callback.**
+- **Decoder thread:** drains the mic queue, runs `Decoder.feed` and `ChordListener.feed`, and posts each `Heard` to the asyncio loop with `loop.call_soon_threadsafe`.
+- **The asyncio main loop** (`app.py`) runs at 20 Hz:
+  1. `clock.tick(dt)`, then `adviser.on_bar(bar)` for every new bar;
+  2. `synth.set(state.step, state.score)`;
+  3. `adviser.decide(now)` every 2 seconds;
+  4. when nothing is being sent, `engine.send(modem.encode(adviser.packet()))`, alternating with `clock.packet()` on the conductor;
+  5. the WebSocket broadcast, at 10 Hz.
+- **Latency correction:** a `Heard` carries the time the packet *ended*, so the clock adds the packet's length when it re-locks.
 
-### 9.5 Chord analysis (stretch goal, after +12h: "it really is listening")
-- Every 0.5 s, take an 8,192-point FFT (5.9 Hz bins) of the mic input, keep 100–2,000 Hz, and fold the energy into 12 pitch classes.
-- Compare against the 7 triad templates by cosine similarity. Return `{step: similarity}`.
-- **Use:** for each peer heard on pilots, show "✓ heard" in the UI if that peer's chord template scores ≥ 0.6.
-- **Never used for decisions (D4).**
+### Run modes (so everyone can work without the others' code)
+| Mode | Flag | What's real | What's faked | Who needs it |
+| --- | --- | --- | --- | --- |
+| **Offline simulation** | `python -m backend.sim --advisers 4 --loss 0.1` | finance, adviser, clock | the air, via `VirtualRoom` (packets with loss and delay, no audio) | P1 tuning convergence |
+| **Software loopback** | `--loopback` | everything, including modem encode and decode | the speaker and mic: samples are mixed with noise in memory | P2, and continuous integration |
+| **Single Mac** | `--channel N` | everything | other Macs: `--echo` replays this Mac's own packets on another channel as a fake neighbour | P3, P4 |
+| **Room** | `--channel N [--conductor]` | everything | nothing | final integration |
+| **UI mock** | `npm run dev:mock` | the UI | the backend (a mock WebSocket replaying `frontend/mock/state.jsonl`) | P4, from hour 1 |
 
----
+## 3. Data
+- **Source:** HistData.com free 1-minute bars for **EUR/CHF, EUR/GBP and GBP/CHF**, December 2014 to January 2015. The files are downloaded by hand from their site. **Check their terms before committing the raw files**; if unsure, commit only the prepared output, or just the script.
+- **Fallback:** European Central Bank daily reference rates (free CSV). These are daily only, so the storm is less dramatic.
+- **Preparation** (`scripts/prepare_data.py`):
+  - Align the three series on timestamp and drop gaps.
+  - Resample to a configurable bar size (default **15 minutes**, about 1,300 bars for 2–23 January 2015).
+  - Write `data/chf2015.csv`.
+- **The position (seen from a UK company):**
+  - **Exposure S** = the GBP value of a CHF receivable = 1 / (GBP/CHF).
+  - **Proxy F** = the GBP value of EUR = EUR/GBP.
+  - While the euro-franc cap held, S and F moved almost together. On 15 January 2015 that link broke.
+- **Returns:** log returns per bar, `r = ln(p_t / p_{t-1})`. **All correlation and variance maths uses returns, never prices.**
 
-## 10. User interface
+## 4. Finance engine (one per adviser)
+### The strategy dial: reaction speed
+- The dial is a **half-life H in bars**: how quickly the adviser forgets old data. Its EWMA decay factor is `λ = 0.5^(1/H)`.
+- The dial runs from **H = 4 bars** (1 hour, reacts fast) to **H = 256 bars** (about 2.7 days, steady), on a **log scale** split into **7 steps**. It moves continuously, but for the music it's rounded to the nearest step.
 
-### 10.1 Layout (one page, served at `http://localhost:8000/`, or Vite at `:5173` in development)
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│ Storm Chorus · Mac 1 (channel 1) · following conductor      ● connected  │
-├──────────────────────────────┬───────────────────────────────────────────┤
-│ OWN ADVISER                  │ STORM CHART                               │
-│  Strategy: 8h memory         │  S and F rebased to 100 (two lines)       │
-│  Dial 3.4 · step 3 · D major │  ─────────────────────────────────────    │
-│  Score E  ███████░░░  0.71   │  rolling correlation ρ, −1 to 1           │
-│  Hedge ratio h  0.62         │  │ shock marker (15 Jan 09:30)            │
-│  P&L unhedged  −14.2%        │  ┃ replay position                        │
-│  P&L hedged    −12.9%        │                                           │
-│  Listening: 3 · leader Mac 2 │                                           │
-│  Trial in progress           │                                           │
-├──────────────────────────────┴───────────────────────────────────────────┤
-│ [Start] [Pause] [Reset]   Speed ◀ 4 ▶ (8 bars/s)   12 Jan 2015 14:15 UTC │
-└──────────────────────────────────────────────────────────────────────────┘
-```
-- Two columns from 900 px wide. Below that, one column.
-- **Score colour:** green when E ≥ 0.7, amber from 0.4 to 0.7, red below 0.4. These thresholds match the dissonance layers in §8.2.
-- **Chart:**
-  - Only bars ≤ the current bar are shown. The `history` message has the whole replay window, so the chart slices it, and never reveals the future.
-  - The chart re-renders at most 4 times a second.
-- **Controls:**
-  - Enabled on the conductor, or on a follower that's `free`. Disabled (with a tooltip "following the conductor") otherwise.
-  - The speed control shows bars per second next to the step.
-- **Connection banner:** if the WebSocket closes, show "backend not running" and retry every 1 s.
+### At every bar t
+1. Update the exponentially weighted estimates:
+   - `cov_SF ← λ·cov_SF + (1−λ)·r_S·r_F`
+   - `var_F ← λ·var_F + (1−λ)·r_F²`
+2. **Hedge ratio:** `h_t = cov_SF / var_F`. This is the minimum-variance ratio, ρ·σ_S/σ_F.
+3. **Hedged return:** `r_H = r_S − h_{t−1}·r_F`.
+   - ⚠️ **Use the *previous* bar's ratio.** Using `h_t` would let the adviser see the future.
+4. **Score: rolling hedge effectiveness** over a fixed window of **W = 96 bars** (1 day), the same window for every adviser:
+   - `E = 1 − var(r_H) / var(r_S)`, clipped to [0, 1].
+   - 1 means a perfect hedge. 0 means the hedge isn't helping, or is making things worse.
+   - W is deliberately **separate from the dial**, so all the advisers are judged by the same yardstick.
+5. Also track cumulative unhedged and hedged P&L, for the UI.
 
-Not in v1: a list of every peer, or a debug spectrum view. Add them only if tuning needs them, after +12h.
+Warm-up: run the first 2 days of data silently, before the replay starts, so the estimates have settled.
 
-### 10.2 WebSocket protocol (`/ws`, JSON, mirrored in `frontend/src/protocol.ts`)
+## 5. Adviser behaviour
+### Starting positions
+Configurable per Mac (`--dial <step>`). Defaults for 4 Macs: steps **0, 3, 4, 5**. In A major those are the A, D, E and F♯m chords, which sound fine together.
+
+### MVP convergence rule: step a fraction
+Every **decision period** (about 2 seconds, or after each round of heard advisers):
+1. **Who's the leader?** The best score among this Mac and every adviser heard within the last **6 seconds**.
+2. If the leader isn't this Mac, and the leader's score is better than this Mac's by at least **0.05**:
+   - Move the dial: `dial ← dial + 0.2·(leader_dial − dial)`.
+3. **Trial and revert:** keep a note of the dial before the move. If, after **K = 16 bars**, this Mac's score is worse than before by more than 0.05, move back and ignore that leader for 10 seconds.
+4. **If no other adviser can be heard:** keep the current dial and carry on alone. That's resilience.
+
+### After the MVP (keep the design open for these)
+- **Full particle swarm optimisation:** velocity, inertia, each adviser's own best and the group's best.
+- **Probabilistic jumps:** jump straight to the leader's dial with a probability that rises with the score gap.
+- **Lid angle as risk appetite:** the lid nudges this Mac's dial by hand. The reader already exists at `sensors/lid.c`.
+
+## 6. Music
+- **Key: A major.** Dial steps 0–6 map to the chords built on each note of the scale: **A, Bm, C♯m, D, E, F♯m, G♯dim**.
+  - Because every chord stays in the key, advisers moving between strategies still sound musical.
+  - (The original idea had each Mac on a major chord, such as A major and B major. Staying in one key avoids clashes when the market is calm.)
+- **Register:** 3-note chords voiced in **200–1,500 Hz**, which is where MacBook speakers sound good.
+- **Dissonance from the score E.** It increases smoothly, so the change is gradual:
+  - **Beating:** detune the upper voices by up to **±30 cents × (1 − E)**. This is the "physics of dissonance" point from the pitch.
+  - **Clashing notes:**
+    - below E = 0.7: add a note a semitone above the root;
+    - below E = 0.4: also add a tritone;
+    - below E = 0.2: add filtered noise (roughness).
+- **Transitions:** when the rounded root changes, move the chord in a 150-millisecond step rather than a smooth glide.
+- **Volume:** the chord sits well below the pilot tones. Each Mac has a calibration setting for its own level.
+
+## 7. Communication through sound
+### 7a. Pilot tones (the data channel, MVP)
+- **Frequency plan:** 4 channels between **14.0 and 18.8 kHz**, each **1.2 kHz** wide. Each Mac has its own channel (`--channel 0–3`), and ignores its own.
+- **Modulation:** 16-tone frequency-shift keying (16-FSK) within a channel, tones **75 Hz apart**. Each symbol carries 4 bits.
+- **Symbol timing:** **100 ms** of tone plus a **20 ms** gap, with smooth (raised-cosine) edges so there are no clicks.
+- **Decoding:**
+  - FFT size **2048 at 48 kHz** (23.4 Hz per bin), with a Hann window.
+  - In each symbol, pick the strongest of the 16 tone bins.
+  - It counts as a valid tone only if it's at least **10 dB above that channel's noise floor**, which is measured as the median energy across the channel.
+- **Packet (about 48 bits, about 1.5 seconds):**
+  | Field | Bits |
+  | --- | --- |
+  | Start marker: a fixed 2-symbol pattern | 8 |
+  | Packet type (adviser or clock) | 2 |
+  | Sequence number | 4 |
+  | Adviser: score E, scaled 0–63 | 6 |
+  | Adviser: dial, scaled 0–63 | 6 |
+  | Clock only: bar number | 12 |
+  | Clock only: speed step | 4 |
+  | Error check (CRC-8) | 8 |
+  - Packets that fail the CRC are dropped.
+  - Upgrade path: add error correction (Hamming(7,4)) if too many packets are lost in the hall.
+- **Robustness:**
+  - Turn off every automatic audio process on the microphone (echo cancellation, noise suppression, auto volume). They wreck tones.
+  - Band-pass the input to 13.5–19.3 kHz before decoding.
+  - Each heard adviser's state includes its last packet, how strong its signal was, and its age. After 6 seconds with no packet it's marked **lost** and isn't used.
+  - Log decode statistics (packets heard, CRC failures) to help with tuning.
+- **⚠️ Many young people can hear 14–19 kHz as a faint whine.** Keep the level as low as decoding allows, and set it on the day.
+
+### 7b. Chord analysis (stretch goal: "it really is listening")
+- Analyse the mic input in **100–2,000 Hz** to see which notes are present, then match that against the 7 chords in the key.
+- Use it to **cross-check**: a pilot packet says an adviser is on dial step 3, so the room should contain a D chord. Show "✓ heard" when the audio confirms it.
+- **It's never used for decisions.** In unison every Mac plays the same chord, so chords alone can't tell the advisers apart.
+
+### 7c. Shared replay clock
+- **One Mac is the conductor** (`--conductor`). It sends a clock packet about once every 3 seconds, carrying the bar number and the speed step.
+- **The other Macs follow it:**
+  - If they're more than **8 bars** out, they jump to the heard bar number, corrected for the packet's length.
+  - Otherwise they adjust speed by up to ±10% until they catch up.
+- **If the clock is lost,** a Mac keeps going at the last speed it heard. When the clock returns, it re-locks.
+- **Speed:** 8 steps from 0 (paused) to about 40 bars per second. The default lets the storm part of the replay take about **90 seconds**. Only the conductor's UI shows the speed control.
+
+## 8. User interface (each Mac)
+1. **Own adviser status:**
+   - this Mac's name or channel, and whether it's the conductor;
+   - the dial, shown as the half-life in hours, plus its step and chord name (e.g. "D major");
+   - the score E as a meter, and the current hedge ratio h;
+   - unhedged versus hedged P&L;
+   - the clock status: "following conductor", "free-running", or "conductor".
+2. **Storm chart:**
+   - S and F, rebased to 100 at the start of the replay;
+   - the rolling correlation underneath;
+   - a marker for the replay position, and a fixed marker at **15 January 2015, 09:30 UTC**.
+3. **Controls:** start, pause, reset, and (on the conductor only) the speed control.
+
+Not in v1: a list of the other advisers, or a debug spectrum view. Add one if it's needed for tuning.
+
+### Backend ↔ frontend messages (WebSocket `/ws`, JSON)
 ```jsonc
 // backend → UI, once, on connect
 { "type": "hello", "channel": 1, "conductor": false,
@@ -966,57 +1055,98 @@ Not in v1: a list of every peer, or a debug spectrum view. Add them only if tuni
 ## 11. Repository layout
 ```
 backend/
-  __init__.py
-  contracts.py        shared dataclasses (frozen at +1h)                    all (§4.4 rules)
-  config.py           every tunable constant                                all (§4.5 rules)
-  app.py              FastAPI, /ws, main loop, options, run modes           P4
-  data.py             load_bars, replay_range                               P1
-  finance.py          Hedger, Effectiveness, PnL                            P1
-  adviser.py          Adviser, Peer, convergence, trial and revert          P3
-  sim.py              offline simulation with several advisers, plots       P3
-  mocks.py            VirtualRoom (P3), VirtualAir (P2)                     P3 + P2
-  replay.py           Clock                                                 P2
-  audio/__init__.py
-  audio/engine.py     duplex stream, callback, decoder thread               P2
-  audio/modem.py      encode, Decoder, crc8                                 P2
-  audio/synth.py      chords and dissonance                                 P2
-  audio/chords.py     (stretch) ChordListener                               P2
-  tests/              test_<module>.py, one per module                      module owner
-frontend/
-  src/protocol.ts     WebSocket message types (mirror of §10.2)             P4
-  src/App.tsx, src/components/{StatusPanel,StormChart,Controls,Banner}.tsx  P4
-  mock/               hello.json, history.json, state.jsonl                 P4
-tools/
-  tone_probe.py       hall test: play or listen for each channel's tones    P2
-  audition.py         dissonance sweep on the speakers                      P2
-  sweep.py            all 7 strategies alone through the storm              P3
-scripts/prepare_data.py                                                     P1
-data/chf2015.csv      committed;  data/raw/ is gitignored                    P1
-sensors/lid.c         (post-MVP) lid angle reader                           P2
-.github/workflows/ci.yml                                                    P4
-requirements.txt                                                            all (§12.3 rule 3)
-README.md             how to run, for judges and teammates                  P4
+  contracts.py      shared dataclasses (frozen at +1h)                      all
+  app.py            FastAPI app, WebSocket, main loop, run modes            P4
+  mocks.py          VirtualRoom, echo neighbour                              P1+P2
+  data.py           load_bars                                                P1
+  finance.py        EWMA hedge ratio, hedged returns, rolling effectiveness  P1
+  adviser.py        dial, convergence rule, trial and revert                 P1
+  sim.py            offline simulation with several advisers and plots       P1
+  replay.py         clock: bars, speed, following the conductor             P2
+  audio/engine.py   full-duplex audio stream, decoder thread                 P2
+  audio/modem.py    pilot-tone packets: encode, decode, CRC                  P2
+  audio/synth.py    chord and dissonance synthesis                           P3
+  audio/chords.py   (stretch goal) chord analysis                            P3
+  tests/            one test file per module                                 module owner
+frontend/           Vite + React, mock/state.jsonl                           P4
+tools/tone_probe.py hall test: play or detect one tone                       P2
+tools/audition.py   play the dissonance sweep on the speakers                P3
+scripts/prepare_data.py                                                      P1
+data/chf2015.csv                                                             P1
+sensors/lid.c       (after the MVP) lid angle reader, prints degrees         P3
+.github/workflows/  CI: pytest, loopback smoke test, frontend build          P4
 ```
 
-**Running a Mac for the demo:**
-```bash
-pip install -r requirements.txt
-(cd frontend && npm install && npm run build)
-python -m backend.app --channel 1                 # add --conductor on exactly one Mac
-open http://localhost:8000
-```
+Run one Mac with `python -m backend.app --channel 1 [--conductor] [--dial 3]`, and run the UI with `npm run dev` in `frontend/`.
 
----
-
-## 12. Team and agent plan
+## 10. Team and agent plan
 Four people (**P1–P4**, names assigned after review). Each person runs **2–3 agents in parallel** and is the human owner of everything those agents produce.
 
-### 12.1 The three roles
+### 10a. The four roles
 | | Role | Owns (only they and their agents edit these) | Done when |
 | --- | --- | --- | --- |
-| **P1 + P3** | **Data and finance** (two people, one shared role) | `scripts/`, `data/`, `backend/data.py`, `finance.py`, `adviser.py`, `sim.py`, `tools/sweep.py`, `VirtualRoom` in `mocks.py` | The sweep passes §6.4. The simulation passes §7.6. The finance tests pass. |
-| **P2** | **Audio and music** (the critical path) | `backend/audio/`, `replay.py`, `VirtualAir` in `mocks.py`, `tools/tone_probe.py`, `tools/audition.py`, `sensors/` | Packets decode at least 90% of the time Mac to Mac at 1 m **in the hall, with the chord playing**. Followers stay within 8 bars of the conductor. The dissonance sweep sounds like a smooth slide from "fine" to "wrong" to the team. Levels are calibrated. |
-| **P4** | **UI, integration and demo** | `frontend/`, `backend/app.py`, CI, `README.md`, the demo script (§14) | Two Macs run the whole arc from the UI. `--smoke` passes in CI. The demo has been rehearsed 3 times. |
+| **P1** | **Data and finance** | `scripts/`, `data/`, `backend/data.py`, `finance.py`, `adviser.py`, `sim.py` | In the offline simulation, the 4 advisers' dials converge after 15 January and the average score goes up |
+| **P2** | **Audio link** (the critical path) | `backend/audio/modem.py`, `audio/engine.py`, `replay.py`, `tools/tone_probe.py` | Packets from one Mac decode on another 1 m away **in the hall** at least 90% of the time, and followers stay within 8 bars of the conductor |
+| **P3** | **Music** | `backend/audio/synth.py`, `audio/chords.py`, `tools/audition.py`, `sensors/` | Dissonance from E = 1 to 0 sounds like a smooth slide from "fine" to "wrong" to the team, the pilot tones stay audible to the decoder underneath the chord, and the volume is calibrated |
+| **P4** | **UI, integration and demo** | `frontend/`, `backend/app.py`, `backend/mocks.py` (shared with P1/P2), CI, `README.md`, the demo script | Two Macs run the whole arc started from the UI, and the demo is rehearsed 3 times |
+
+P2 has the riskiest work. **If the hall test at +2h fails or looks shaky, P1 moves to help P2** once the finance work is stable (around +8h).
+
+### 10b. Agent lanes for each person
+**One agent = one git worktree = one branch = one slice of that person's folders.** Agent Wrangler: one **task** per person, one **session** per lane, with **Git worktree** ticked. Use the session checklist to track the lane's progress, and the task memory for decisions in that workstream.
+
+| Person | Lane A | Lane B | Lane C |
+| --- | --- | --- | --- |
+| **P1** | `feat/data-prep`: download, align and resample the data; write `data/chf2015.csv`, with a check that 15 January is present | `feat/finance-core`: `Hedger`, `Effectiveness`, and the finance tests in §12 | `feat/adviser-sim`: `Adviser`, `VirtualRoom`, `sim.py`, and a plot of dials and scores over time for tuning |
+| **P2** | `feat/modem`: `encode`, `Decoder`, CRC, the noise test | `feat/audio-engine`: the duplex stream, the mic settings, the decoder thread; `tone_probe.py` for the hall test | `feat/clock-sync`: `Clock`, following the conductor, the loopback test with two clocks |
+| **P3** | `feat/synth`: chords, dissonance mapping, smooth transitions; `audition.py` (sweep E from 1 to 0 on the speakers) | `feat/chord-listener` (stretch goal, start after +8h) | `feat/lid` (post-MVP): connect `sensors/lid.c` to the dial nudge |
+| **P4** | `feat/ui`: the status panel and storm chart, built against mock state | `feat/app-wiring`: `app.py`, the WebSocket, run modes, `--echo` | `chore/ci-and-docs`: a GitHub Action (pytest plus frontend build), `README.md` run steps, the demo script |
+
+### 10c. Rules for agents (also add these to `AGENTS.md`)
+1. **Stay in your lane's files.** If you need a change somewhere else, stop and tell your human. Don't edit another workstream's folders.
+2. **Never edit `contracts.py`** after +1h, unless your human has an approved contract pull request.
+3. **Shared files are append-only, in small pull requests:**
+   - `requirements.txt`: one pull request per new dependency, with a one-line reason;
+   - `frontend/package.json`: P4 only.
+4. **Claim work with GitHub issues, not by editing `AGENTS.md`.** Twelve agents editing one table guarantees merge conflicts. Each issue gets an area label (`area:finance`, `area:audio`, `area:music`, `area:ui`) and an assignee. `AGENTS.md`'s ownership table lists **people only**.
+5. **Keep pull requests small:** under about 300 lines, one purpose each, with the test that proves it. Rebase on `main` before opening one.
+6. **`main` must always run.** Before merging, `pytest` and `python -m backend.app --loopback --smoke` (runs 200 bars, then exits 0) must pass. CI enforces this once lane P4-C has landed.
+7. **Use mocks, don't wait.** If code you depend on isn't merged yet, code against the contract and the mock modes in §2. Never copy another lane's work in progress.
+
+### 10d. How the work depends on itself
+```
+ +0–1h   contracts.py + repo skeleton (P4 leads, all 4 people agree)  ──┐
+                                                                         │ frozen
+ ┌───────────────┬─────────────────┬──────────────────┬───────────────────┘
+ P1 data ─▶ finance ─▶ adviser+sim      P2 tone_probe ─▶ modem ─▶ engine ─▶ clock
+ │                         │               │ (hall test +2h: go / no-go)   │
+ │                         ▼               ▼                               ▼
+ │                     VirtualRoom ◀──── shared mock ────▶ loopback mode
+ P3 synth + audition ──────────────────────────────┐
+ P4 UI on mock ──▶ app wiring ──▶ CI ──────────────┤
+                                                   ▼
+                       +8h first integration: single Mac with --echo
+                       +12h MVP: two Macs, sound only, full arc
+```
+
+### 10e. Integration checkpoints
+P4 runs each one, and **all four people stop for 10 minutes**:
+| Time | Checkpoint | Pass means |
+| --- | --- | --- |
+| **+1h** | Contracts frozen | `contracts.py` merged, the skeleton runs, every agent lane is started |
+| **+2h** | Hall go/no-go (P2) | `tone_probe.py` detects a 16 kHz tone at 1 m in the real hall at normal busyness. If it fails: raise the level, move the Macs closer, add error correction, and decide whether the demo needs a quieter spot. |
+| **+4h** | Pieces in isolation | The offline simulation converges, the modem loopback passes, `audition.py` plays the dissonance sweep, and the UI renders mock state |
+| **+8h** | Single Mac, end to end | `--channel 0 --echo` runs the whole arc from the UI, with the real speaker and mic |
+| **+12h** | **MVP** | Two Macs, sound only, calm → storm → convergence. **Freeze scope:** after this, only stretch goals and polish. |
+| **+18h** | Room | 4 Macs, conductor clock, tuned in the hall. Stretch goals (chord listener, lid) merge only if they don't break the MVP. |
+| **+22h** | Code freeze | Rehearse the demo three times and write the submission. Only fixes after this. |
+
+### 10f. Daily rhythm for each person
+- **Every 1–2 hours:** review your agents' pull requests, merge what passes, and restart or redirect any lane that's stuck. You're the reviewer and decision-maker, and your agents write the code.
+- **Watch the Agent Wrangler board** for sessions flagged as needing you, so a blocked agent doesn't wait an hour.
+- **Ask for help early** if a lane is blocked by another workstream's interface. Fix the contract, don't work around it.
+- **Sleep in shifts** (at least 2 people awake), and never sleep with a red `main`.
+
 
 - **Finance is two people.** P1 leads the numbers (data, hedge ratio, score, P&L). P3 leads the strategies (the adviser, convergence, sweep, simulation). They review each other's pull requests.
 - **Audio is one person, and it's the riskiest work.** The chord and pilot tones share one speaker, mic and audio engine, so one owner keeps them consistent.
