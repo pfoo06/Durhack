@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-ClockStatus = Literal["conductor", "following", "free"]
+ClockStatus = Literal["free"]
 
 
 @dataclass(frozen=True)

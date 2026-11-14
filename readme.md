@@ -19,8 +19,8 @@ Command: `python -m backend.app [options]` from the repo root (full option list:
 | Offline simulation | `python -m backend.sim` | No |
 | Strategy sweep | `python tools/sweep.py` | Yes |
 | Software loopback | `python -m backend.app --loopback [--smoke]` | Yes |
-| Single Mac | `python -m backend.app --channel 0 --conductor --fake-neighbour 3` | Yes, not yet tried on a real Mac |
-| Room | `python -m backend.app --channel N [--conductor]` on each Mac | Yes, not yet tried on real Macs |
+| Single Mac | `python -m backend.app --channel 0 --fake-neighbour 3` | Yes, not yet tried on a real Mac |
+| Room | `python -m backend.app --channel N` on each Mac | Yes, not yet tried on real Macs |
 | UI mock | `npm run dev:mock` in `frontend/` | Yes |
 
 ## Run the demo on several Macs

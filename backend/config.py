@@ -39,6 +39,7 @@ COUNT_IN_GAIN_DB = -6
 COUNT_IN_ONSET_DB = 6.0
 COUNT_IN_TOL_S = 0.08
 COUNT_IN_FLOOR_S = 1.0
+COUNT_IN_DEAF_S = 1.0  # after playing its own count-in a Mac ignores count-ins this long past beat 4 (its own echo)
 CHORD_GAIN_DB = -12
 PILOT_GAIN_DB = -18
 LOOP_HZ = 20

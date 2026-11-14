@@ -1,4 +1,5 @@
-"""Replay clock (SPEC 9.4). Positions are indices into `bars`. A 4-beat count-in starts every Mac; then each free-runs."""
+"""Replay clock (SPEC 9.4). Positions are indices into `bars`. Any Mac can play a 4-beat count-in; every Mac starts on
+beat 4, then each free-runs."""
 from datetime import datetime, timezone
 
 from backend import config
@@ -16,9 +17,8 @@ def _stamp(s: str) -> datetime:
 
 
 class Clock:
-    def __init__(self, bars: list[Bar], conductor: bool) -> None:
+    def __init__(self, bars: list[Bar]) -> None:
         self._bars = bars
-        self._conductor = conductor
         start, end = _stamp(config.REPLAY_START), _stamp(config.REPLAY_END)
         # bars before REPLAY_START are warm-up, not part of the replay
         self._first = next((k for k, b in enumerate(bars) if _utc(b.time) >= start), len(bars) - 1)
@@ -28,12 +28,13 @@ class Clock:
         self._step = config.DEFAULT_SPEED_STEP
         self._acc = 0.0
         self._reset_pending = False
-        self._count = 0.0  # conductor: seconds until beat 4
-        self._count_due = False  # conductor: clicks not yet handed to the speaker
+        self._count = 0.0  # own count-in: seconds until beat 4
+        self._count_due = False  # own clicks not yet handed to the speaker
+        self._deaf = 0.0  # seconds left in which a heard count-in is our own echo
 
     @property
     def status(self) -> ClockStatus:
-        return "conductor" if self._conductor else "free"
+        return "free"
 
     @property
     def speed_step(self) -> int:
@@ -44,27 +45,28 @@ class Clock:
         return self._pos
 
     def start(self) -> None:
-        """From REPLAY_START at DEFAULT_SPEED_STEP. The conductor counts in first (see take_count_in); a follower
-        calls this on hearing beat 4 (on_count_in)."""
+        """Play a count-in: from REPLAY_START at DEFAULT_SPEED_STEP, running on beat 4 (see take_count_in)."""
         self.reset()
         self._step = config.DEFAULT_SPEED_STEP
-        if self._conductor:
-            self._count, self._count_due = (config.COUNT_IN_CLICKS - 1) * config.COUNT_IN_INTERVAL_S, True
-        else:
-            self._paused = False
+        self._count, self._count_due = (config.COUNT_IN_CLICKS - 1) * config.COUNT_IN_INTERVAL_S, True
+        self._deaf = self._count + config.COUNT_IN_DEAF_S
 
     def take_count_in(self, lead: float = 0.0) -> bool:
-        """True once per conductor start(): play the clicks now. `lead` = seconds of audio queued ahead of them."""
+        """True once per start(): play the clicks now. `lead` = seconds of audio queued ahead of them."""
         due, self._count_due = self._count_due, False
         if due:
             self._count += lead
+            self._deaf += lead
         return due
 
-    def on_count_in(self, lag: float = 0.0) -> None:
-        """A follower heard beat 4 `lag` seconds ago: start now, already `lag` seconds in."""
-        if not self._conductor:
-            self.start()
-            self._acc = config.SPEED_BARS_PER_S[self._step] * lag
+    def on_count_in(self, lag: float = 0.0) -> bool:
+        """Heard beat 4 `lag` seconds ago: start now, already `lag` seconds in. False if it was our own echo."""
+        if self._deaf > 0:
+            return False
+        self.reset()
+        self._step, self._paused = config.DEFAULT_SPEED_STEP, False
+        self._acc = config.SPEED_BARS_PER_S[self._step] * lag
+        return True
 
     def pause(self) -> None:
         self._paused, self._count, self._count_due = True, 0.0, False
@@ -79,6 +81,7 @@ class Clock:
 
     def tick(self, dt: float) -> Tick:
         reset, self._reset_pending = self._reset_pending, False
+        self._deaf = max(0.0, self._deaf - dt)
         if self._count > 0:
             self._count -= dt
             if self._count <= 0:  # beat 4: run, with the part of this tick past the beat already banked

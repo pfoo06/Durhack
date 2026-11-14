@@ -21,8 +21,7 @@ export default function App() {
   const afterShock = !!(state && hello && Date.parse(state.time) >= Date.parse(hello.shockTime));
   const phase: Phase = !afterShock ? 0 : score < CLASH_BELOW ? 1 : 2;
   const warmth = phase === 2 ? 1 : 0;
-  const conductor = hello?.conductor ?? false;
-  const clockText = state?.clock === "conductor" ? "conductor · sending clock" : state?.clock === "free" ? "free-running (clock lost)" : "following conductor";
+  const clockText = state?.clock === "free" ? "running" : "waiting for count-in";
 
   return (
     <div className="app">
@@ -58,7 +57,7 @@ export default function App() {
       </main>
 
       <Controls paused={state?.paused ?? true} speed={state?.speed ?? 0} speeds={hello?.speeds ?? []}
-        conductor={conductor} clock={state?.clock ?? "following"} modem={state?.modem ?? "pilot"} time={state?.time ?? ""} error={error} send={send} />
+        modem={state?.modem ?? "pilot"} time={state?.time ?? ""} error={error} send={send} />
     </div>
   );
 }

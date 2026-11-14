@@ -3,7 +3,7 @@
 Source: SPEC §14 and §15. Rehearse at the real speed.
 
 ## Before you start
-- [ ] Every Mac has a different `--channel`; exactly one has `--conductor`
+- [ ] Every Mac has a different `--channel`; press Start on any one
 - [ ] Terminal has microphone permission; Mic Mode is Standard (not Voice Isolation)
 - [ ] `http://localhost:8000` open on each Mac
 - [ ] Macs close together (about 0.5 m if the hall is loud)
@@ -27,7 +27,7 @@ Timing tip: if the shock arrives too late, raise the speed during calm (step 5 o
 | --- | --- |
 | Hall too loud for pilot tones | Raise the pilot level, lower `PILOT_BASE_BIN`, Macs to 0.5 m, send each packet twice. Last resort: quieter corner, and say the sound link is the hard part. |
 | Channel 3 (18-19 kHz) fails, others pass | Lower `PILOT_BASE_BIN` so all channels move down |
-| Followers drift out of sync (more than 8 bars) | Check the 1.54 s latency constant and the conductor's packet rate |
+| Followers drift out of sync (more than 8 bars) | Check the 1.54 s latency constant and the count-in |
 | No audio input, or all zeros | Grant mic permission to the terminal app; check after every restart |
 | Audio callback overruns (`xruns` rising) | Remove work from the callback; raise `BLOCK` to 960 |
 | Convergence sounds flat | Tune `STEP_FRACTION` and `DECISION_PERIOD_S`; make sure starting dials are well apart |
