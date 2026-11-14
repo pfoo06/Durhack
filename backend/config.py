@@ -1,19 +1,19 @@
 """Every tunable number lives here (SPEC 4.5). Audio/clock group owned by P2."""
-BAR_MINUTES = 15
+BAR_MINUTES = 120  # 2-hour bars: 15-minute bars fail the §6.4 sweep (SPEC §6.4 "Sweep result")
 REPLAY_START = "2015-01-12T00:00Z"
 REPLAY_END = "2015-01-23T22:00Z"
 SHOCK_TIME = "2015-01-15T09:30Z"
-RHO_WINDOW = 96
-H_MIN_BARS = 4
+RHO_WINDOW = 12  # 1 trading day of 2-hour bars
+H_MIN_BARS = 1  # step 0 = 2 h, step 6 = 128 h
 DIAL_MAX = 6.0
-SCORE_WINDOW = 96
+SCORE_WINDOW = 24  # 2 trading days
 H_CLAMP = (0.0, 2.0)
 START_DIALS = (0, 3, 4, 5)
 DECISION_PERIOD_S = 2.0
 MOVE_THRESHOLD = 0.05
 STEP_FRACTION = 0.2
 SNAP_DISTANCE = 0.1
-TRIAL_BARS = 16
+TRIAL_BARS = 4  # 8 h of market time; 16 left the advisers only partway converged in the 2-hour replay
 REVERT_MARGIN = 0.05
 BLACKLIST_S = 10.0
 LOST_AFTER_S = 10.0
@@ -30,7 +30,7 @@ IDLE_MS = 300
 RAMP_MS = 5
 MIN_TONE_DB = 10.0
 SPEED_BARS_PER_S = (0, 1, 2, 4, 8, 16, 32, 64)
-DEFAULT_SPEED_STEP = 4
+DEFAULT_SPEED_STEP = 1  # 1 bar/s: the 119-bar replay takes about 2 minutes
 FOLLOW_JUMP_BARS = 8
 FOLLOW_TRIM = 0.10
 RESET_BACK_BARS = 96
