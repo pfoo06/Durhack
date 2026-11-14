@@ -44,14 +44,18 @@ def _db(x: float) -> float:
     return 10 ** (x / 20)
 
 
-_PACKET_S = (C.TONE_MS + C.GAP_MS) * 10 / 1000  # a pilot packet's tones (§9.2); its data dates from their start
 
 class Ears:  # MELODY: both modems are always decoded, so Macs on different modems still hear each other
     def __init__(self, channel: int) -> None:
         self.decoders = [modem.Decoder(channel), melody.MelodyDecoder(channel)]
+        self.packet_s = [modem.PACKET_S, melody.PACKET_S]  # each modem's packet length up to received_at
 
     def feed(self, frames: np.ndarray, t0: float) -> list[Heard]:
-        return [h for d in self.decoders for h in d.feed(frames, t0)]
+        return [h for h, _ in self.feed_timed(frames, t0)]
+
+    def feed_timed(self, frames: np.ndarray, t0: float) -> list[tuple[Heard, float]]:
+        """Each packet heard, with how long its modem's packets take (to age a position correctly, §9.4a)."""
+        return [(h, s) for d, s in zip(self.decoders, self.packet_s) for h in d.feed(frames, t0)]
 
     @property
     def stats(self) -> dict:
@@ -181,12 +185,12 @@ class Mac:
         self._slot_sent[ch] = int(k)
         return True
 
-    def on_heard(self, heard: Heard, now: float) -> None:
+    def on_heard(self, heard: Heard, now: float, packet_s: float = modem.PACKET_S) -> None:
         pkt = heard.packet
         if isinstance(pkt, AdviserPacket):
             self.adviser.on_heard(heard)
             return
-        age = now - heard.received_at + _PACKET_S  # the position was stamped when the packet started
+        age = now - heard.received_at + packet_s  # the position was stamped when the packet started
         if self.clock.on_heard_bar(pkt.channel, pkt.bar, pkt.speed_step, age):
             self.paused = False
             speed = C.SPEED_BARS_PER_S[self.clock.speed_step]
@@ -293,8 +297,8 @@ class LoopbackRoom:
                 for k, m in enumerate(self.macs)]
         for k, mac in enumerate(self.macs):
             heard_audio = self.air[k].mix(outs)
-            for heard in self.decoders[k].feed(heard_audio, self.t):
-                mac.on_heard(heard, self.t + dt)
+            for heard, packet_s in self.decoders[k].feed_timed(heard_audio, self.t):
+                mac.on_heard(heard, self.t + dt, packet_s)
             if (lag := self.detectors[k].feed(heard_audio)) is not None:  # COUNT-IN
                 mac.on_count_in(lag)
         self.t += dt
@@ -468,8 +472,8 @@ def main(argv: list[str] | None = None) -> int:
         def on_frames(block: np.ndarray, t: float) -> None:  # decoder thread
             if (lag := detector.feed(block)) is not None:
                 loop_ref["loop"].call_soon_threadsafe(mac.on_count_in, lag)
-            for heard in decoder.feed(block, t):
-                loop_ref["loop"].call_soon_threadsafe(mac.on_heard, heard, time.monotonic())
+            for heard, packet_s in decoder.feed_timed(block, t):
+                loop_ref["loop"].call_soon_threadsafe(mac.on_heard, heard, time.monotonic(), packet_s)
 
         dev = lambda d: int(d) if d is not None and d.isdigit() else d  # noqa: E731
         engine = Engine(mac.synth, on_frames, a.chord_gain_db, a.pilot_gain_db, dev(a.input_device), dev(a.output_device))

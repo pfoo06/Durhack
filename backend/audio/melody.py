@@ -15,6 +15,7 @@ _NSYM = 11  # 14**11 > 2**40
 _SPAN = _HPS * (_NSYM - 1)
 _EXT = 4
 _LAST_END = (_NSYM - 1) * _SYM + _TONE
+PACKET_S = _LAST_END / C.SAMPLE_RATE  # first note to Heard.received_at (end of the last note): 1.08 s
 _WIN = np.hanning(C.FFT_N).astype(np.float32)
 
 # A major, B6 up to B8, minus C#8 (4435 Hz sits on a count-in click partial, countin.py)
