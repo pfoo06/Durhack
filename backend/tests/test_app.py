@@ -25,7 +25,7 @@ def test_messages_match_protocol(bars):
     assert set(state) == {"type", "bar", "time", "speed", "paused", "clock", "adviser"}
     assert set(state["adviser"]) == {"channel", "dial", "step", "chord", "halfLifeHours", "h", "score",
                                      "pnlUnhedgedPct", "pnlHedgedPct", "leaderChannel", "heard", "inTrial"}
-    assert state["adviser"]["halfLifeHours"] == pytest.approx(4 * 2**3 * 15 / 60)
+    assert state["adviser"]["halfLifeHours"] == pytest.approx(app.C.H_MIN_BARS * 2**3 * app.C.BAR_MINUTES / 60)
 
 
 def test_controls(bars):

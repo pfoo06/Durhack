@@ -242,16 +242,17 @@ def run_smoke(bars: list[Bar], snr_db: float = 0.0, chord_gain_db: float = C.CHO
     conductor.clock.set_speed(len(C.SPEED_BARS_PER_S) - 1)
     conductor.handle({"type": "control", "action": "start"})
     dt = 1 / C.LOOP_HZ
+    target_bars = min(SMOKE_BARS, conductor.last - conductor.first + 1)  # 2-hour bars: the replay is ~119 bars
     while room.t < SMOKE_TIMEOUT_S:
         room.step(dt)
-        done_bars = conductor.bar - conductor.first + 1 >= SMOKE_BARS
+        done_bars = conductor.bar - conductor.first + 1 >= target_bars
         if done_bars and all(d.stats["packets"] >= SMOKE_MIN_PACKETS for d in room.decoders):
             break
     stats = [d.stats for d in room.decoders]
     follower = room.macs[1]
     log.info("smoke: %.1f virtual s, conductor bar %d, follower bar %d (%s), decode stats %s",
              room.t, conductor.bar, follower.bar, follower.clock.status, stats)
-    return all(s["packets"] >= SMOKE_MIN_PACKETS for s in stats) and conductor.bar - conductor.first + 1 >= SMOKE_BARS
+    return all(s["packets"] >= SMOKE_MIN_PACKETS for s in stats) and conductor.bar - conductor.first + 1 >= target_bars
 
 
 # ---------------------------------------------------------------- web server and main loop

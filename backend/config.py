@@ -1,12 +1,12 @@
 """Every tunable number lives here (SPEC 4.5). Audio/clock group owned by P2."""
-BAR_MINUTES = 15
+BAR_MINUTES = 120  # 2-hour bars: 15-minute bars fail the §6.4 sweep (SPEC §6.4 "Sweep result")
 REPLAY_START = "2015-01-12T00:00Z"
 REPLAY_END = "2015-01-23T22:00Z"
 SHOCK_TIME = "2015-01-15T09:30Z"
-RHO_WINDOW = 96
-H_MIN_BARS = 4
+RHO_WINDOW = 12  # 1 trading day of 2-hour bars
+H_MIN_BARS = 1  # step 0 = 2 h, step 6 = 128 h
 DIAL_MAX = 6.0
-SCORE_WINDOW = 96
+SCORE_WINDOW = 24  # 2 trading days
 H_CLAMP = (0.0, 2.0)
 START_DIALS = (0, 3, 4, 5)
 DECISION_PERIOD_S = 2.0

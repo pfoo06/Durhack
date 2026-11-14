@@ -4,3 +4,4 @@ pytest
 pandas
 fastapi
 uvicorn[standard]
+matplotlib
