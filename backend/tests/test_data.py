@@ -42,3 +42,20 @@ def test_no_weekend_bars() -> None:
         assert day != 5, f"Saturday bar at {b.time}"
         assert not (day == 4 and hour >= 22), f"Friday-night bar at {b.time}"
         assert not (day == 6 and hour < 22), f"Sunday-daytime bar at {b.time}"
+
+
+def test_history_payload_is_the_rebased_replay_window() -> None:
+    from backend.data import history_payload
+
+    bars = load_bars(CSV)
+    first, last = replay_range(bars)
+    payload = history_payload(bars)
+    rows = payload["bars"]
+    assert payload["type"] == "history"
+    assert len(rows) == last - first + 1
+    assert rows[0]["i"] == first and rows[-1]["i"] == last
+    assert rows[0]["time"] == "2015-01-12T00:00:00Z"
+    assert rows[0]["S"] == 100.0 and rows[0]["F"] == 100.0
+    assert set(rows[0]) == {"i", "time", "S", "F", "rho"}
+    shock = next(r for r in rows if r["time"] == "2015-01-15T09:30:00Z")
+    assert shock["S"] > 110  # the franc jumped against the pound

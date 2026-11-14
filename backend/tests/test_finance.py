@@ -135,3 +135,23 @@ def test_matches_reference_on_real_data(step: int) -> None:
     rF = df["rF"].to_numpy(dtype=float)
     _, _, E = run_engine(rS, rF, half_life=4 * 2**step)
     assert np.max(np.abs(E - reference_run(rS, rF, H=4 * 2**step))) < 1e-9
+
+
+def test_pnl_accumulates_losses_on_a_rising_franc() -> None:
+    from backend.finance import PnL
+
+    pnl = PnL()
+    assert pnl.update(0.01, 0.002) == pytest.approx((-1.0, -0.2))
+    assert pnl.update(-0.005, 0.0) == pytest.approx((-0.5, -0.2))
+
+
+def test_pnl_matches_engine_hedged_returns() -> None:
+    from backend.finance import PnL
+
+    rS, rF = synthetic(500)
+    rH, _, _ = run_engine(rS, rF, half_life=32)
+    pnl = PnL()
+    for t in range(len(rS)):
+        unhedged, hedged = pnl.update(float(rS[t]), float(rH[t]))
+    assert unhedged == pytest.approx(-100 * rS.sum())
+    assert hedged == pytest.approx(-100 * rH.sum())
