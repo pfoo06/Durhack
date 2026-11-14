@@ -338,9 +338,13 @@ def live_body(mac: Mac, engine: Any, extra: list[StandInAdviser]) -> Any:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m backend.app", description="Storm Chorus backend (SPEC §4.8)")
-    p.add_argument("--channel", type=int, default=0, choices=range(4))
-    p.add_argument("--conductor", action="store_true")
-    p.add_argument("--dial", type=float)
+    p.add_argument("--channel", type=int, default=0, choices=range(4),
+                   help="this Mac's identity, 0-3: picks its pilot-tone band and its starting strategy "
+                        "(START_DIALS: 0 -> dial 0, 1 -> 3, 2 -> 4, 3 -> 5). Give every Mac a different channel.")
+    p.add_argument("--conductor", action="store_true",
+                   help="this Mac sends the shared replay clock. Exactly one Mac in the room is the conductor.")
+    p.add_argument("--dial", type=float,
+                   help="override the starting strategy (0.0-6.0; half-life = 2^dial bars of 2 hours)")
     p.add_argument("--fake-neighbour", type=float, metavar="D")
     p.add_argument("--loopback", action="store_true")
     p.add_argument("--snr-db", type=float, default=0.0)
@@ -402,7 +406,9 @@ def main(argv: list[str] | None = None) -> int:
             if "loop" not in loop_ref:
                 loop_ref["loop"] = asyncio.get_running_loop()
                 engine.start()
-                log.info("audio started on channel %d%s", a.channel, " (conductor)" if a.conductor else "")
+                log.info("audio started on channel %d%s, starting dial %.2f (half-life %.0f h)", a.channel,
+                         " (conductor)" if a.conductor else "", mac.adviser.dial,
+                         C.H_MIN_BARS * 2**mac.adviser.dial * C.BAR_MINUTES / 60)
             body()
         app = create_app(mac, started_body)
 
