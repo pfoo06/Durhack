@@ -36,6 +36,100 @@ Targets: the DurHack theme "Composition", SGX FX (market storm), and Marshall Wa
 | Frontend | React + Vite, one charting library (e.g. Recharts) |
 | Data prep | A one-off pandas script that writes a small CSV the backend loads at startup |
 
+### Components and data flow
+```
+                       ┌──────────── backend (one Python process) ─────────────────────────┐
+ data/chf2015.csv ──▶  │ data.load_bars ──▶ replay.Clock ──bar──▶ adviser.Adviser          │
+                       │                       ▲   ▲               │  uses finance.*    │
+                       │       ClockPacket ────┘   │               │                    │
+                       │                     speed (UI)            ▼ AdviserState       │
+                       │                                   app (state hub) ──▶ WebSocket ──▶ React
+                       │                                      │       ▲                   │
+                       │            AdviserPacket / ClockPacket│       │ Heard[]          │
+                       │                                      ▼       │                   │
+                       │  audio.engine ◀── synth.Synth (chord)   modem.Decoder ◀── mic    │
+                       │      │      ◀── modem.encode (pilot)         ▲                   │
+                       │      └──▶ speaker                    mic frames (queue)          │
+                       └────────────────────────────────────────────────────────────────────┘
+```
+
+### Contracts (`backend/contracts.py`)
+These dataclasses are the **only** things that cross between workstreams. They're **frozen at +1h**. After that, changing one needs a pull request approved by the owner of every workstream that uses it.
+
+```python
+from dataclasses import dataclass
+from datetime import datetime
+
+@dataclass(frozen=True)
+class Bar:            # one replay step, produced by data / replay
+    i: int            # bar index from the start of the data file
+    time: datetime
+    S: float          # GBP value of 1 CHF
+    F: float          # GBP value of 1 EUR
+    rS: float         # log return of S
+    rF: float         # log return of F
+    rho: float        # rolling correlation of rS, rF (96 bars), for the chart
+
+@dataclass
+class AdviserState:   # produced by adviser, read by app, synth and UI
+    channel: int
+    dial: float       # continuous, 0.0–6.0
+    step: int         # round(dial), 0–6, the chord
+    half_life_bars: float
+    h: float          # current hedge ratio
+    score: float      # rolling effectiveness E, 0–1
+    pnl_hedged: float
+    pnl_unhedged: float
+
+@dataclass(frozen=True)
+class AdviserPacket:  # what goes over the air about an adviser
+    channel: int; seq: int; score: float; dial: float
+
+@dataclass(frozen=True)
+class ClockPacket:    # what the conductor sends
+    channel: int; seq: int; bar: int; speed_step: int
+
+@dataclass(frozen=True)
+class Heard:          # what the decoder reports
+    packet: AdviserPacket | ClockPacket
+    snr_db: float
+    received_at: float  # time.monotonic() when the packet ENDED
+```
+
+### Module interfaces
+| Module | Interface | Owner |
+| --- | --- | --- |
+| `data.py` | `load_bars(path) -> list[Bar]` | P1 |
+| `finance.py` | `Hedger(half_life_bars).update(bar) -> (h_prev, r_hedged)`, `set_half_life(bars)`; `Effectiveness(window=96).update(rS, rH) -> float` | P1 |
+| `adviser.py` | `Adviser(channel, start_dial)`: `on_bar(bar) -> AdviserState`, `on_heard(heard: Heard)`, `decide(now) -> None`, `packet() -> AdviserPacket` | P1 |
+| `audio/modem.py` | `encode(packet) -> np.ndarray[float32]` (48 kHz mono); `Decoder(own_channel).feed(frames) -> list[Heard]` | P2 |
+| `audio/engine.py` | `Engine(synth, on_frames)`: a full-duplex `sounddevice` stream. `send(samples)` queues pilot audio. Mic frames go to `on_frames` **outside** the audio callback. | P2 |
+| `replay.py` | `Clock(bars, conductor: bool)`: `tick(dt) -> list[Bar]` (the bars passed since the last tick), `set_speed(step)`, `on_clock(heard)`, `status -> "conductor" \| "following" \| "free"`, `packet() -> ClockPacket` | P2 |
+| `audio/synth.py` | `Synth()`: `set(step: int, score: float)`, `render(n) -> np.ndarray[float32]`. It must be real-time safe: no allocation-heavy work and no locks inside `render`. | P3 |
+| `audio/chords.py` | (stretch goal) `ChordListener().feed(frames) -> int \| None` (the chord step heard) | P3 |
+| `app.py` | FastAPI app, `/ws`, the main loop and the wiring. **Only P4 edits this file.** | P4 |
+| `mocks.py` | `VirtualRoom(loss=0.1, delay_s=1.5)`, see below | P1 + P2 |
+
+### Threads and timing
+- **Audio callback** (sounddevice, about every 10 ms): `out = synth.render(n) + next pilot samples`. It copies the mic frames into a queue and returns. **No FFTs and no I/O in the callback.**
+- **Decoder thread:** drains the mic queue, runs `Decoder.feed` and `ChordListener.feed`, and posts each `Heard` to the asyncio loop with `loop.call_soon_threadsafe`.
+- **The asyncio main loop** (`app.py`) runs at 20 Hz:
+  1. `clock.tick(dt)`, then `adviser.on_bar(bar)` for every new bar;
+  2. `synth.set(state.step, state.score)`;
+  3. `adviser.decide(now)` every 2 seconds;
+  4. when nothing is being sent, `engine.send(modem.encode(adviser.packet()))`, alternating with `clock.packet()` on the conductor;
+  5. the WebSocket broadcast, at 10 Hz.
+- **Latency correction:** a `Heard` carries the time the packet *ended*, so the clock adds the packet's length when it re-locks.
+
+### Run modes (so everyone can work without the others' code)
+| Mode | Flag | What's real | What's faked | Who needs it |
+| --- | --- | --- | --- | --- |
+| **Offline simulation** | `python -m backend.sim --advisers 4 --loss 0.1` | finance, adviser, clock | the air, via `VirtualRoom` (packets with loss and delay, no audio) | P1 tuning convergence |
+| **Software loopback** | `--loopback` | everything, including modem encode and decode | the speaker and mic: samples are mixed with noise in memory | P2, and continuous integration |
+| **Single Mac** | `--channel N` | everything | other Macs: `--echo` replays this Mac's own packets on another channel as a fake neighbour | P3, P4 |
+| **Room** | `--channel N [--conductor]` | everything | nothing | final integration |
+| **UI mock** | `npm run dev:mock` | the UI | the backend (a mock WebSocket replaying `frontend/mock/state.jsonl`) | P4, from hour 1 |
+
 ## 3. Data
 - **Source:** HistData.com free 1-minute bars for **EUR/CHF, EUR/GBP and GBP/CHF**, December 2014 to January 2015. The files are downloaded by hand from their site. **Check their terms before committing the raw files**; if unsure, commit only the prepared output, or just the script.
 - **Fallback:** European Central Bank daily reference rates (free CSV). These are daily only, so the storm is less dramatic.
@@ -175,31 +269,98 @@ Not in v1: a list of the other advisers, or a debug spectrum view. Add one if it
 ## 9. Repository layout
 ```
 backend/
-  app.py            FastAPI app, WebSocket, starts the audio streams and the replay loop
-  replay.py         clock: bars, speed, following the conductor
-  finance.py        EWMA hedge ratio, hedged returns, rolling effectiveness
-  adviser.py        dial, convergence rule, trial and revert
-  audio/synth.py    chord and dissonance synthesis
-  audio/modem.py    pilot-tone packets: encode, decode, CRC
-  audio/chords.py   (stretch goal) chord analysis
-  tests/            finance, modem and convergence tests
-frontend/           Vite + React
-scripts/prepare_data.py
-data/chf2015.csv
-sensors/lid.c       (after the MVP) lid angle reader, prints degrees
+  contracts.py      shared dataclasses (frozen at +1h)                      all
+  app.py            FastAPI app, WebSocket, main loop, run modes            P4
+  mocks.py          VirtualRoom, echo neighbour                              P1+P2
+  data.py           load_bars                                                P1
+  finance.py        EWMA hedge ratio, hedged returns, rolling effectiveness  P1
+  adviser.py        dial, convergence rule, trial and revert                 P1
+  sim.py            offline simulation with several advisers and plots       P1
+  replay.py         clock: bars, speed, following the conductor             P2
+  audio/engine.py   full-duplex audio stream, decoder thread                 P2
+  audio/modem.py    pilot-tone packets: encode, decode, CRC                  P2
+  audio/synth.py    chord and dissonance synthesis                           P3
+  audio/chords.py   (stretch goal) chord analysis                            P3
+  tests/            one test file per module                                 module owner
+frontend/           Vite + React, mock/state.jsonl                           P4
+tools/tone_probe.py hall test: play or detect one tone                       P2
+tools/audition.py   play the dissonance sweep on the speakers                P3
+scripts/prepare_data.py                                                      P1
+data/chf2015.csv                                                             P1
+sensors/lid.c       (after the MVP) lid angle reader, prints degrees         P3
+.github/workflows/  CI: pytest, loopback smoke test, frontend build          P4
 ```
 
 Run one Mac with `python -m backend.app --channel 1 [--conductor] [--dial 3]`, and run the UI with `npm run dev` in `frontend/`.
 
-## 10. Workstreams
-To be assigned once the team has reviewed this. Each workstream owns its folders and talks to the others only through the interfaces in §4–§8.
+## 10. Team and agent plan
+Four people (**P1–P4**, names assigned after review). Each person runs **2–3 agents in parallel** and is the human owner of everything those agents produce.
 
-| # | Workstream | Owns | Done when |
+### 10a. The four roles
+| | Role | Owns (only they and their agents edit these) | Done when |
 | --- | --- | --- | --- |
-| 1 | **Data and finance** | `scripts/`, `data/`, `finance.py`, `adviser.py` | Run offline with no audio, the 4 simulated advisers converge, and their scores improve after 15 January |
-| 2 | **Audio modem** | `audio/modem.py`, the clock half of `replay.py` | A packet sent from one Mac decodes on another 1 m away in the hall, at least 90% of the time |
-| 3 | **Music** | `audio/synth.py`, `audio/chords.py` | Chords and dissonance sound right across E = 0 to 1; volume calibrated on the MacBook speakers |
-| 4 | **UI and integration** | `frontend/`, `app.py`, the demo script | Two Macs run the whole arc from the UI, and the demo is rehearsed |
+| **P1** | **Data and finance** | `scripts/`, `data/`, `backend/data.py`, `finance.py`, `adviser.py`, `sim.py` | In the offline simulation, the 4 advisers' dials converge after 15 January and the average score goes up |
+| **P2** | **Audio link** (the critical path) | `backend/audio/modem.py`, `audio/engine.py`, `replay.py`, `tools/tone_probe.py` | Packets from one Mac decode on another 1 m away **in the hall** at least 90% of the time, and followers stay within 8 bars of the conductor |
+| **P3** | **Music** | `backend/audio/synth.py`, `audio/chords.py`, `tools/audition.py`, `sensors/` | Dissonance from E = 1 to 0 sounds like a smooth slide from "fine" to "wrong" to the team, the pilot tones stay audible to the decoder underneath the chord, and the volume is calibrated |
+| **P4** | **UI, integration and demo** | `frontend/`, `backend/app.py`, `backend/mocks.py` (shared with P1/P2), CI, `README.md`, the demo script | Two Macs run the whole arc started from the UI, and the demo is rehearsed 3 times |
+
+P2 has the riskiest work. **If the hall test at +2h fails or looks shaky, P1 moves to help P2** once the finance work is stable (around +8h).
+
+### 10b. Agent lanes for each person
+**One agent = one git worktree = one branch = one slice of that person's folders.** Agent Wrangler: one **task** per person, one **session** per lane, with **Git worktree** ticked. Use the session checklist to track the lane's progress, and the task memory for decisions in that workstream.
+
+| Person | Lane A | Lane B | Lane C |
+| --- | --- | --- | --- |
+| **P1** | `feat/data-prep`: download, align and resample the data; write `data/chf2015.csv`, with a check that 15 January is present | `feat/finance-core`: `Hedger`, `Effectiveness`, and the finance tests in §12 | `feat/adviser-sim`: `Adviser`, `VirtualRoom`, `sim.py`, and a plot of dials and scores over time for tuning |
+| **P2** | `feat/modem`: `encode`, `Decoder`, CRC, the noise test | `feat/audio-engine`: the duplex stream, the mic settings, the decoder thread; `tone_probe.py` for the hall test | `feat/clock-sync`: `Clock`, following the conductor, the loopback test with two clocks |
+| **P3** | `feat/synth`: chords, dissonance mapping, smooth transitions; `audition.py` (sweep E from 1 to 0 on the speakers) | `feat/chord-listener` (stretch goal, start after +8h) | `feat/lid` (post-MVP): connect `sensors/lid.c` to the dial nudge |
+| **P4** | `feat/ui`: the status panel and storm chart, built against mock state | `feat/app-wiring`: `app.py`, the WebSocket, run modes, `--echo` | `chore/ci-and-docs`: a GitHub Action (pytest plus frontend build), `README.md` run steps, the demo script |
+
+### 10c. Rules for agents (also add these to `AGENTS.md`)
+1. **Stay in your lane's files.** If you need a change somewhere else, stop and tell your human. Don't edit another workstream's folders.
+2. **Never edit `contracts.py`** after +1h, unless your human has an approved contract pull request.
+3. **Shared files are append-only, in small pull requests:**
+   - `requirements.txt`: one pull request per new dependency, with a one-line reason;
+   - `frontend/package.json`: P4 only.
+4. **Claim work with GitHub issues, not by editing `AGENTS.md`.** Twelve agents editing one table guarantees merge conflicts. Each issue gets an area label (`area:finance`, `area:audio`, `area:music`, `area:ui`) and an assignee. `AGENTS.md`'s ownership table lists **people only**.
+5. **Keep pull requests small:** under about 300 lines, one purpose each, with the test that proves it. Rebase on `main` before opening one.
+6. **`main` must always run.** Before merging, `pytest` and `python -m backend.app --loopback --smoke` (runs 200 bars, then exits 0) must pass. CI enforces this once lane P4-C has landed.
+7. **Use mocks, don't wait.** If code you depend on isn't merged yet, code against the contract and the mock modes in §2. Never copy another lane's work in progress.
+
+### 10d. How the work depends on itself
+```
+ +0–1h   contracts.py + repo skeleton (P4 leads, all 4 people agree)  ──┐
+                                                                         │ frozen
+ ┌───────────────┬─────────────────┬──────────────────┬───────────────────┘
+ P1 data ─▶ finance ─▶ adviser+sim      P2 tone_probe ─▶ modem ─▶ engine ─▶ clock
+ │                         │               │ (hall test +2h: go / no-go)   │
+ │                         ▼               ▼                               ▼
+ │                     VirtualRoom ◀──── shared mock ────▶ loopback mode
+ P3 synth + audition ──────────────────────────────┐
+ P4 UI on mock ──▶ app wiring ──▶ CI ──────────────┤
+                                                   ▼
+                       +8h first integration: single Mac with --echo
+                       +12h MVP: two Macs, sound only, full arc
+```
+
+### 10e. Integration checkpoints
+P4 runs each one, and **all four people stop for 10 minutes**:
+| Time | Checkpoint | Pass means |
+| --- | --- | --- |
+| **+1h** | Contracts frozen | `contracts.py` merged, the skeleton runs, every agent lane is started |
+| **+2h** | Hall go/no-go (P2) | `tone_probe.py` detects a 16 kHz tone at 1 m in the real hall at normal busyness. If it fails: raise the level, move the Macs closer, add error correction, and decide whether the demo needs a quieter spot. |
+| **+4h** | Pieces in isolation | The offline simulation converges, the modem loopback passes, `audition.py` plays the dissonance sweep, and the UI renders mock state |
+| **+8h** | Single Mac, end to end | `--channel 0 --echo` runs the whole arc from the UI, with the real speaker and mic |
+| **+12h** | **MVP** | Two Macs, sound only, calm → storm → convergence. **Freeze scope:** after this, only stretch goals and polish. |
+| **+18h** | Room | 4 Macs, conductor clock, tuned in the hall. Stretch goals (chord listener, lid) merge only if they don't break the MVP. |
+| **+22h** | Code freeze | Rehearse the demo three times and write the submission. Only fixes after this. |
+
+### 10f. Daily rhythm for each person
+- **Every 1–2 hours:** review your agents' pull requests, merge what passes, and restart or redirect any lane that's stuck. You're the reviewer and decision-maker, and your agents write the code.
+- **Watch the Agent Wrangler board** for sessions flagged as needing you, so a blocked agent doesn't wait an hour.
+- **Ask for help early** if a lane is blocked by another workstream's interface. Fix the contract, don't work around it.
+- **Sleep in shifts** (at least 2 people awake), and never sleep with a red `main`.
+
 
 ## 11. Milestones (24 hours from 12:00)
 | By | Milestone |
