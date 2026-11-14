@@ -167,3 +167,35 @@ def test_heard_packets_carry_their_modem_length(kind):
     heard, s = got[0]
     assert s == packet_s and heard.packet.bar == 100
     assert abs(heard.received_at - (0.5 + packet_s)) < 0.05  # received_at is packet start + its modem's length
+
+
+def test_melody_late_joiner_shares_the_turn_clock(bars):
+    """Melody, Start pressed before the other Mac can hear the count-in: once it joins, its turns line up with
+    the room's, so both Macs keep hearing each other (whole-project review, must fix)."""
+    room = app.LoopbackRoom(bars, 0.0, app.C.CHORD_GAIN_DB, app.C.PILOT_GAIN_DB, modem_mode="melody")
+    m0, m1 = room.macs
+    m0.handle({"type": "control", "action": "start"})
+    dt = 1 / app.C.LOOP_HZ
+    while m1.paused and room.t < 40:
+        room.step(dt)
+    assert not m1.paused
+    before = [d.stats["packets"] for d in room.decoders]
+    end = room.t + 40
+    while room.t < end:
+        room.step(dt)
+    assert abs(m1.slot_t0 - m0.slot_t0) < 0.3  # inside the 0.3 s window a turn may start in
+    assert all(d.stats["packets"] - b >= 3 for d, b in zip(room.decoders, before))
+
+
+def test_reset_shows_the_restored_adviser_at_once(bars):
+    """After Reset the screen and synth must show the warmed-up adviser, not the last bar before the reset."""
+    mac = app.Mac(bars, 0)
+    warm_score = mac.state.score
+    mac.on_count_in()
+    mac.step(0.05, 0.0)
+    mac.step(60.0, 0.05)  # well past the shock
+    assert mac.state.score < warm_score
+    mac.handle({"type": "control", "action": "reset"})
+    mac.step(0.05, 60.1)
+    assert mac.paused and mac.state.score == warm_score
+    assert mac.state_message()["adviser"]["score"] == round(warm_score, 4)
