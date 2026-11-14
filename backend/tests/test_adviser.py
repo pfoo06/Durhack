@@ -109,12 +109,7 @@ def test_trial_kept_when_gap_holds() -> None:
     a.score = 0.3  # the market fell for both: the gap is unchanged (D12)
     hear(a, 1, 0.4, 5.0, at=105.0)
     a.decide(105.0)
-    # Kept, and the trial ended. The leader is still 0.1 ahead, so it becomes the candidate again (§7.3)...
-    assert a.dial == FIRST and a.trial is None and a.candidate == (1, 105.0)
-    # ...and the next fresh packet confirms it, so the adviser moves again.
-    lead_again = 105.0 + max(C.DECISION_PERIOD_S, PACKET_S) + 0.1
-    hear(a, 1, 0.4, 5.0, at=lead_again)
-    a.decide(lead_again)
+    # Kept, and the trial ended. The confirmed leader is still 0.1 ahead, so the same decide moves again (§7.3).
     assert a.dial == FIRST + C.STEP_FRACTION * (5.0 - FIRST)
     assert a.trial is not None and a.trial.old_dial == FIRST
 
@@ -170,6 +165,22 @@ def test_lead_needs_a_packet_started_after_it_was_first_seen() -> None:
     hear(a, 1, 0.6, 5.0, at=fresh)
     a.decide(fresh)
     assert a.dial == FIRST
+
+
+def test_confirmation_is_needed_again_after_the_lead_ends() -> None:
+    a = Adviser(0, 0.0)
+    a.score = 0.5
+    t = lead(a, 1, 0.6, 5.0, at=100.0)
+    assert a.dial == FIRST and a.confirmed == 1
+    advance(a, C.TRIAL_BARS)
+    t += C.DECISION_PERIOD_S
+    hear(a, 1, 0.52, 5.0, at=t)  # the lead shrinks under MOVE_THRESHOLD
+    a.decide(t)
+    assert a.confirmed is None
+    t += C.DECISION_PERIOD_S
+    hear(a, 1, 0.9, 5.0, at=t)  # ahead again: a new candidate, not an immediate move
+    a.decide(t)
+    assert a.dial == FIRST and a.candidate == (1, t)
 
 
 def test_lost_peer_is_not_leader() -> None:

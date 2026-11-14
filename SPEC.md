@@ -700,17 +700,18 @@ class Peer:
    leader = the candidate with the highest score (tie → the lowest channel)
 4. If leader is self: clear the candidate and return.
 5. If leader.score − own.score < MOVE_THRESHOLD: clear the candidate and return.      # not worth moving
-5b. Confirm the lead on a fresh packet:
+5b. Confirm a new leader on a fresh packet (skip this if the leader is already the confirmed one):
     - If there's no candidate, or the candidate isn't this leader: candidate = (leader, now). Return.
     - If the leader's latest packet started before the candidate was set
       (heard_at − PACKET_S ≤ candidate time): return.                                    # wait for a fresh one
-    - Otherwise clear the candidate and carry on.
+    - Otherwise clear the candidate and mark this leader confirmed.
+    (Steps 4 and 5 clear both the candidate and the confirmed leader.)
 6. If |leader.dial − dial| ≤ SNAP_DISTANCE:  new_dial = leader.dial
    else:                                     new_dial = dial + STEP_FRACTION · (leader.dial − dial)
 7. Start a trial: remember (old_dial = dial, leader channel, gap_at_move = leader.score − own.score,
    bars_at_move = bars processed so far). Set dial = new_dial and call hedger.set_half_life(4 · 2**dial).
 ```
-**Why step 5b (stale scores at the shock):** a packet takes about 1.6 s to send, so the score it carries can be from before a market move. On the shock bar an adviser's own score is already ~0 while the packet it last heard still says the leader is at ~0.99, so without 5b every adviser moved towards the pre-shock leader, and dial 0 (the best aftermath strategy, §6.4) left dial 0 in every simulated run. With 5b the next fresh packet shows the leader crashed too, the gap disappears, and nobody moves. A real lead is still followed, one decision (about 2 s) later. `PACKET_S = (TONE_MS + GAP_MS) × 10 / 1000` (§9.2).
+**Why step 5b (stale scores at the shock):** a packet takes about 1.6 s to send, so the score it carries can be from before a market move. On the shock bar an adviser's own score is already ~0 while the packet it last heard still says the leader is at ~0.99, so without 5b every adviser moved towards the pre-shock leader, and dial 0 (the best aftermath strategy, §6.4) left dial 0 in every simulated run. With 5b the next fresh packet shows the leader crashed too, the gap disappears, and nobody moves. A real lead is still followed, one decision (about 2 s) later, and once confirmed the adviser keeps stepping towards that leader without re-confirming until the lead ends. `PACKET_S = (TONE_MS + GAP_MS) × 10 / 1000` (§9.2).
 
 At the default speed (1 bar/s), a confirmed move can happen about every 2–4 s. A gap of 2 steps closes to under half a step (the same chord) in 2 moves (about 4 s), and is fully snapped in about 5 moves (about 10 s). That matters because on the real data the strategies only separate clearly in the last ~25 s of the replay (21–23 January). Tuned in the simulation: with `STEP_FRACTION` 0.2 the advisers never reached one chord.
 
