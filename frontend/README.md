@@ -5,7 +5,7 @@ React 18 + Vite + TypeScript. One page per Mac; it only draws what its own backe
 ```bash
 cd frontend
 npm install
-npm run dev:mock            # mock backend on ws://localhost:8000/ws + Vite on http://localhost:5173 (acts as the conductor)
+npm run dev:mock            # mock backend on ws://localhost:8000/ws + Vite on http://localhost:5173
 npm run dev:mock:follower   # same, but acting as a follower: controls are disabled
 npm run dev                 # Vite only, against a real backend on :8000
 npm run build               # type-check and build to frontend/dist (served by the backend at /)

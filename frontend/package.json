@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "vite",
     "dev:mock": "node mock/server.mjs",
-    "dev:mock:follower": "node mock/server.mjs --follower",
     "mock:generate": "node mock/generate.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
