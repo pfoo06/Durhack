@@ -28,7 +28,7 @@ def test_replay_range_is_inside_the_data() -> None:
     first, last = replay_range(bars)
     assert 0 < first < last < len(bars)
     assert bars[first].time == datetime(2015, 1, 12, tzinfo=timezone.utc)
-    assert bars[last].time == datetime(2015, 1, 23, 22, tzinfo=timezone.utc) - timedelta(minutes=BAR_MINUTES)
+    assert bars[last].time == datetime(2015, 1, 22, 10, tzinfo=timezone.utc)  # REPLAY_END: before the ECB announcement
 
 
 def test_shock_bar_is_large() -> None:

@@ -50,7 +50,10 @@ def test_synthetic_data_has_a_shock() -> None:
     assert max(bars, key=lambda b: abs(b.rS)) is shock_bar
 
 
-def test_simulation_passes_on_synthetic_data() -> None:
+def test_simulation_passes_on_synthetic_data(monkeypatch) -> None:
+    # The synthetic aftermath settles over several days (synthetic_bars), so it needs the full two-week replay;
+    # the real replay now stops before the ECB announcement on 22 January.
+    monkeypatch.setattr(C, "REPLAY_END", "2015-01-23T20:00Z")
     bars = sim.synthetic_bars()
     run = sim.simulate(bars, 4, C.DEFAULT_SPEED_STEP, loss=0.1)
     fixed = sim.simulate(bars, 4, C.DEFAULT_SPEED_STEP, loss=None)

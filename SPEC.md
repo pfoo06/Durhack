@@ -44,13 +44,13 @@ Four MacBooks each play the role of an **FX hedging adviser**. They all replay t
 - **The strategy is how much history the adviser trusts** when estimating h: an hour, or several days. That's its **reaction speed**.
 - On 15 January 2015 the floor was removed and the franc–euro link broke. The hedge stopped working. Advisers that adapt their h well score better afterwards. Advisers that cling to the old relationship score worse.
 
-### The arc of the piece (default speed, about 2 minutes)
+### The arc of the piece (default speed 1 bar/s, about 1 minute 42 s)
 | Time | Market | What the room sounds like | Why |
 | --- | --- | --- | --- |
-| 0:00–0:41 | Calm, the floor holds | Four different chords, all clean (**harmony**) | Every strategy hedges well. Score gaps are too small for anyone to move. |
-| about 0:41 | The floor breaks | Every chord turns harsh at once (**dissonance**) | No hedge helps on the shock itself, and everyone's score collapses together |
-| 0:53–1:30 | The aftermath | Chords shift one by one towards one root | Strategies now differ. Advisers hear the leader and move towards it. |
-| 1:30–2:00 | The new normal | One chord, getting cleaner (**unison**) | All advisers have converged on the strategy that works |
+| 0:00–0:40 | Calm, the floor holds | Four different chords, all clean (**harmony**) | Every strategy hedges well. Score gaps are too small for anyone to move. |
+| about 0:40 | The floor breaks | Every chord turns harsh at once (**dissonance**) | No hedge helps on the shock itself, and everyone's score collapses together |
+| 0:40–1:20 | The aftermath | Every chord harsh: no hedge works for about four days of market time | All scores are 0, so nobody leads and nobody moves |
+| 1:20–1:42 | The new normal | Chords shift towards one root (**unison**), the fast strategy leading | Strategies now differ (21–22 January). Advisers hear the leader and move towards it. The replay stops on 22 January at 12:00, before the ECB announcement breaks the euro away too |
 
 ### Prize targets
 | Prize | Why we fit |
@@ -265,7 +265,7 @@ class Heard:                  # one successfully decoded packet
 | --- | --- | --- | --- |
 | `BAR_MINUTES` | 15 | P1 | Bar size used by data prep |
 | `REPLAY_START` | `2015-01-12T00:00Z` | P1 | First replayed bar. Everything before is warm-up. |
-| `REPLAY_END` | `2015-01-23T22:00Z` | P1 | Last replayed bar (Friday market close) |
+| `REPLAY_END` | `2015-01-22T10:00Z` | P1 | Start of the last replayed bar (10:00–12:00), just before the ECB announced QE on 22 January and the euro broke away from the franc too |
 | `SHOCK_TIME` | `2015-01-15T09:30Z` | P1 | For UI markers and phase checks only. Never used in the finance maths. |
 | `RHO_WINDOW` | 96 | P1 | Rolling correlation window for the chart |
 | `H_MIN_BARS` | 4 | P1 | Half-life at dial 0 |
@@ -468,7 +468,7 @@ Run it as `python scripts/prepare_data.py data/raw/ data/chf2015.csv`. It MUST:
 8. **Print and assert these checks:**
    - Row count is between 1,400 and 1,700.
    - The first row is on 2 January 2015.
-   - There's at least one row on or before `REPLAY_START`, and the replay's last bar exists (the bar starting at `REPLAY_END` − `BAR_MINUTES`, because the market closes at `REPLAY_END`).
+   - There's at least one row on or before `REPLAY_START`, and the replay's last bar exists (the bar starting at `REPLAY_END`).
    - The bar containing `SHOCK_TIME` exists and has `|rS| > 0.03`.
    - Outside 15 January, `|eurchf − F/S| / eurchf < 0.005`. This proves S and F were built the right way round.
    - Print the largest five `|rS|` with their times. They MUST be on 15 January.
@@ -477,7 +477,7 @@ Run it as `python scripts/prepare_data.py data/raw/ data/chf2015.csv`. It MUST:
 | | Bars | Note |
 | --- | --- | --- |
 | Warm-up, 2 January to 11 January | 72 | 11 on Friday 2 January, 60 in the week of 4 January, 1 on Sunday evening 11 January. Only about 1 × the longest half-life (64 bars): the slowest strategy hasn't fully settled. Fine for the proof of concept; download December 2014 to fix it. |
-| Replay, 12 to 23 January | 119 (bar indexes 72 to 190) | 59 bars in week 1, then 60 in week 2 |
+| Replay, 12 to 22 January 12:00 | 102 (bar indexes 72 to 173) | 59 bars in week 1, then 43 in week 2. The data runs to 23 January; the replay stops before the ECB announcement (`REPLAY_END`) |
 | Shock | bar 40 of the replay (index 112, the 08:00–10:00 bar) | Thursday 15 January. `rS` = 0.268 on the shock bar. |
 | Total | 191 | Fits the 12-bit bar field in clock packets (maximum 4,095). At the default 8 bars/s the replay lasts about 15 s, so `SPEED_BARS_PER_S` (P2) needs slowing for the ~2-minute arc in §1. |
 
@@ -617,12 +617,12 @@ With **15-minute bars the sweep failed**: after the shock the EUR–CHF link at 
 
 | Step | H (bars) | Calm | Storm | Aftermath |
 | --- | --- | --- | --- | --- |
-| 0 | 1 | 0.948 | 0.000 | 0.306 |
-| 3 | 8 | 0.951 | 0.000 | 0.164 |
-| 4 | 16 | 0.951 | 0.000 | 0.086 |
-| 5 | 32 | 0.950 | 0.000 | 0.061 |
+| 0 | 1 | 0.948 | 0.000 | 0.217 |
+| 3 | 8 | 0.951 | 0.000 | 0.135 |
+| 4 | 16 | 0.951 | 0.000 | 0.059 |
+| 5 | 32 | 0.950 | 0.000 | 0.029 |
 
-Calm gap 0.003 (PASS), aftermath gap 0.245 (PASS), leader changes from step 4 to step 0 (PASS). Aftermath scores stay under about 0.35, so the converged chord stays somewhat dissonant (§8.2): the euro genuinely stopped hedging the franc. Elsewhere in this section, read "96 bars" as `SCORE_WINDOW`.
+With the replay ending before the ECB announcement (22 January 10:00 bar): calm gap 0.003 (PASS), aftermath gap 0.188 (PASS), leader changes from step 4 to step 1 (PASS; steps 0–2 are within 0.006 of each other). Over the full data to 23 January the gap was 0.245, but every strategy then collapsed again as the euro broke away on 23 January. Aftermath scores stay under about 0.35, so the converged chord stays somewhat dissonant (§8.2): the euro genuinely stopped hedging the franc. Elsewhere in this section, read "96 bars" as `SCORE_WINDOW`.
 
 #### What the sweep MUST show (pass criteria)
 `tools/sweep.py` runs each of the 7 steps **alone** through warm-up and replay, then prints a table of mean E per step for three phases:

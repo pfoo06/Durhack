@@ -73,7 +73,7 @@ def check(out: pd.DataFrame) -> None:
     """§5.2 step 8. Prints each check and fails loudly if one doesn't hold."""
     times = out.index
     replay_start = pd.Timestamp(REPLAY_START)
-    last_replay_bar = pd.Timestamp(REPLAY_END) - pd.Timedelta(minutes=BAR_MINUTES)
+    last_replay_bar = pd.Timestamp(REPLAY_END)  # REPLAY_END is the start of the last replayed bar
     shock = pd.Timestamp(SHOCK_TIME)
     shock_bar = shock.floor(f"{BAR_MINUTES}min")
 
