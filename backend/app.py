@@ -32,7 +32,7 @@ CHORDS = ["A", "Bm", "C♯m", "D", "E", "F♯m", "G♯dim"]  # SPEC §8.1, one p
 STEP_HYSTERESIS = 0.6  # SPEC §8.3
 SMOKE_BARS = 200  # SPEC §4.8 --smoke
 SMOKE_MIN_PACKETS = 3
-SMOKE_TIMEOUT_S = 60.0  # virtual seconds
+SMOKE_TIMEOUT_S = 160.0  # virtual seconds: ~119 bars at 1 bar/s plus the count-in
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 

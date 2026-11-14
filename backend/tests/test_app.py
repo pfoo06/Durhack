@@ -2,7 +2,10 @@
 import pytest
 
 from backend import app
+from backend import config as C
 from backend.data import load_bars
+
+DEFAULT_BARS = int(C.SPEED_BARS_PER_S[C.DEFAULT_SPEED_STEP])  # bars in 1 s at the default speed
 
 
 @pytest.fixture(scope="module")
@@ -40,7 +43,7 @@ def test_controls(bars):
     conductor.step(0.05, 0.0)
     conductor.step(1.5, 0.05)  # through the count-in
     conductor.step(1.0, 1.55)
-    assert conductor.bar - conductor.first + 1 == 8 and not conductor.paused  # default speed, not 7
+    assert conductor.bar - conductor.first + 1 == DEFAULT_BARS and not conductor.paused  # default speed, not 7
     assert conductor.handle({"type": "control", "action": "reset"}) is None
     conductor.step(0.05, 2.6)
     assert conductor.bar == conductor.first - 1 and conductor.paused
@@ -52,7 +55,7 @@ def test_follower_starts_on_count_in(bars):
     follower.on_count_in()
     follower.step(0.05, 0.0)
     follower.step(1.0, 0.05)
-    assert follower.bar - follower.first + 1 == 8 and not follower.paused and follower.state_message()["clock"] == "free"
+    assert follower.bar - follower.first + 1 == DEFAULT_BARS and not follower.paused and follower.state_message()["clock"] == "free"
 
 
 def test_only_adviser_packets_are_sent(bars):
