@@ -6,6 +6,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Stop any backend or UI left over from a previous run, so stale code never answers.
+pkill -f 'backend\.app' 2>/dev/null || true
+for port in 8000 5173; do kill $(lsof -ti tcp:$port) 2>/dev/null || true; done
+sleep 1
+
 args=("$@")
 [ ${#args[@]} -eq 0 ] && args=(--channel 0 --fake-neighbour 3)
 
