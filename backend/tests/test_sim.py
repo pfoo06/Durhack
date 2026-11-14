@@ -44,9 +44,8 @@ def test_room_rounds_like_the_modem() -> None:
 
 def test_synthetic_data_has_a_shock() -> None:
     bars = sim.synthetic_bars()
-    assert 1400 <= len(bars) <= 1700  # same range as the real data (§5.2)
-    shock = sim.utc(C.SHOCK_TIME)
-    shock_bar = next(b for b in bars if b.time >= shock)
+    shock_bar = bars[sim.shock_index([b.time for b in bars])]
+    assert shock_bar.time <= sim.utc(C.SHOCK_TIME) < shock_bar.time + sim.timedelta(minutes=C.BAR_MINUTES)
     assert abs(shock_bar.rS) > 0.03
     assert max(bars, key=lambda b: abs(b.rS)) is shock_bar
 

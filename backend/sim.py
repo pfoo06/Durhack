@@ -41,6 +41,13 @@ def utc(stamp: str) -> datetime:
     return datetime.fromisoformat(stamp.replace("Z", "+00:00"))
 
 
+def shock_index(times: list[datetime]) -> int:
+    """The bar that CONTAINS SHOCK_TIME. Bars are labelled by their start (§5.2), so with 2-hour
+    bars the 09:30 shock is in the 08:00 bar, not the first bar at or after 09:30."""
+    shock = utc(C.SHOCK_TIME)
+    return max(k for k, t in enumerate(times) if t <= shock)
+
+
 # ----- data ------------------------------------------------------------------------------------
 
 
@@ -67,7 +74,7 @@ def synthetic_bars(seed: int = 0) -> list[Bar]:
     n = len(times)
     rF = rng.normal(0.0, 4e-4, n)
     rEURCHF = rng.normal(0.0, 3e-5, n)  # pinned: barely moves
-    k_shock = next(k for k, t in enumerate(times) if t >= shock)
+    k_shock = shock_index(times)
     days_after = np.array([(t - shock).total_seconds() / 86400 for t in times])
     after = days_after > 0
     # After the shock EUR/CHF floats: volatility starts high and decays over a few days.
@@ -195,16 +202,15 @@ class Summary:
 
 
 def summarise(run: Run, fixed: Run) -> Summary:
-    shock = utc(C.SHOCK_TIME)
-    k_shock = next(k for k, t in enumerate(run.times) if t >= shock)
+    k_shock = shock_index(run.times)
     k_after = min(k_shock + STORM_BARS, len(run.times) - 1)
     dials = np.array(run.dials)
     spread = dials.max(axis=1) - dials.min(axis=1)
-    calm = dials[: k_shock + 1]
+    calm = dials[:k_shock]  # every bar before the shock bar
     calm_moves = int(np.sum(np.any(np.diff(calm, axis=0) != 0, axis=1)))
     final = [float(d) for d in dials[-1]]
     return Summary(
-        spread_at_shock=float(spread[k_shock]),
+        spread_at_shock=float(spread[k_shock - 1]),  # just before the shock bar
         spread_at_end=float(spread[-1]),
         final_steps=[int(round(d)) for d in final],
         final_dials=final,
