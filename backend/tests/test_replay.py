@@ -1,9 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
-from backend.contracts import Bar, ClockPacket, Heard
-from backend.replay import PACKET_S, Clock
+from backend import config
+from backend.contracts import Bar
+from backend.replay import Clock
 
-STALE_BARS = 8 * PACKET_S  # bars the conductor moves while a step-4 packet is in flight
+COUNT_S = (config.COUNT_IN_CLICKS - 1) * config.COUNT_IN_INTERVAL_S
+RATE = config.SPEED_BARS_PER_S[config.DEFAULT_SPEED_STEP]
 
 
 def make_bars() -> list[Bar]:
@@ -11,14 +13,10 @@ def make_bars() -> list[Bar]:
     return [Bar(k, t0 + timedelta(minutes=15 * k), 1.0, 1.0, 1.0, 0.0, 0.0, 0.0) for k in range(1200)]
 
 
-def follower_hearing(error: float, step: int = 4) -> Clock:
-    """A running follower whose conductor estimate is `error` bars ahead of it (negative: behind)."""
-    c = Clock(make_bars(), conductor=False)
-    c.set_speed(step)
+def counted_in(c: Clock) -> Clock:
     c.start()
-    c.tick(30.0)  # nothing heard yet, runs free: plenty of room both ways
-    bar = c.position + error - STALE_BARS
-    c.on_clock(Heard(ClockPacket(0, 0, round(bar), step), 20.0, 100.0), 100.0)
+    assert c.take_count_in()
+    c.tick(0.0)  # the reset
     return c
 
 
@@ -28,42 +26,66 @@ def test_starts_at_replay_start_paused() -> None:
     assert c.tick(1.0).bars == []
 
 
-def test_speed() -> None:
+def test_conductor_counts_in_then_runs_at_default_speed() -> None:
     c = Clock(make_bars(), conductor=True)
-    c.set_speed(4)
+    c.set_speed(7)
     c.start()
-    assert len(c.tick(1.0).bars) == 8
+    assert c.speed_step == config.DEFAULT_SPEED_STEP  # the count-in fixes the speed
+    assert c.take_count_in() and not c.take_count_in()  # the clicks are handed over once
+    assert c.tick(0.05).reset
+    n = 0
+    for _ in range(round((COUNT_S - 0.1) * 20)):  # silent until beat 4
+        n += len(c.tick(0.05).bars)
+    assert n == 0 and c.position == 10
+    c.tick(0.1)  # beat 4
+    assert len(c.tick(1.0).bars) == RATE
 
 
-def test_packet_seq_wraps() -> None:
+def test_count_in_waits_for_queued_audio() -> None:
     c = Clock(make_bars(), conductor=True)
-    assert [c.packet().seq for _ in range(17)][-2:] == [15, 0]
+    c.start()
+    assert c.take_count_in(lead=1.0)
+    c.tick(0.0)
+    assert c.tick(COUNT_S).bars == [] and c.tick(1.0).bars == []  # still counting
+    assert len(c.tick(1.0).bars) == RATE
 
 
-def test_follow_catch_up() -> None:
-    t = follower_hearing(+20).tick(1.0)
-    assert not t.reset and len(t.bars) >= 20
+def test_new_start_restarts_from_replay_start() -> None:
+    c = counted_in(Clock(make_bars(), conductor=True))
+    c.tick(COUNT_S + 1.0)
+    c.tick(0.0)
+    assert c.position > 10
+    c.start()
+    assert c.take_count_in()
+    assert c.tick(0.0).reset and c.position == 10
 
 
-def test_follow_hold() -> None:
-    t = follower_hearing(-20).tick(1.0)
-    assert not t.reset and t.bars == []
+def test_pause_cancels_count_in() -> None:
+    c = Clock(make_bars(), conductor=True)
+    c.start()
+    c.pause()
+    assert not c.take_count_in()
+    assert c.tick(0.0).reset and c.tick(5.0).bars == []
 
 
-def test_follow_trim() -> None:
-    t = follower_hearing(+3).tick(5.0)
-    assert not t.reset and len(t.bars) > 8 * 5
+def test_follower_starts_on_beat_4_at_replay_start() -> None:
+    c = Clock(make_bars(), conductor=False)
+    c.set_speed(2)
+    assert c.status == "free" and c.tick(5.0).bars == []  # waits for the count-in
+    c.tick(30.0)
+    c.on_count_in()
+    assert c.tick(0.0).reset and c.position == 10 and c.speed_step == config.DEFAULT_SPEED_STEP
+    assert len(c.tick(1.0).bars) == RATE and c.status == "free"  # free-runs, no clock packets
 
 
-def test_follow_reset() -> None:
-    c = follower_hearing(-200)
-    t = c.tick(0.1)
-    assert t.reset and t.bars[0].i == 10 and c.position == t.bars[-1].i + 1
+def test_follower_catches_up_the_detection_lag() -> None:
+    c = Clock(make_bars(), conductor=False)
+    c.on_count_in(lag=0.25)
+    c.tick(0.0)
+    assert len(c.tick(0.0).bars) == RATE // 4
 
 
-def test_lost_goes_free_keeps_speed() -> None:
-    c = follower_hearing(0, step=5)
-    assert c.status == "following"
-    for _ in range(11):
-        c.tick(1.0)
-    assert c.status == "free" and c.speed_step == 5
+def test_conductor_ignores_own_count_in() -> None:
+    c = Clock(make_bars(), conductor=True)
+    c.on_count_in()
+    assert c.tick(1.0).bars == []

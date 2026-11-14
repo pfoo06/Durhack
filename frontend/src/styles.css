@@ -47,7 +47,7 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--moon); outl
 .conn i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: breathe 2.4s ease-in-out infinite; }
 .conn-closed, .conn-connecting { color: var(--flare-soft); }
 
-.grid { display: grid; grid-template-columns: minmax(270px, 330px) minmax(0, 1fr) minmax(300px, 380px); gap: 24px; padding: 18px 40px 8px; align-items: center; }
+.grid { display: grid; grid-template-columns: minmax(250px, 290px) minmax(0, 1fr) minmax(400px, 33vw); gap: 24px; padding: 18px 40px 8px; align-items: center; }
 .stage { display: flex; justify-content: center; align-items: center; min-height: 0; }
 .orb { width: 100%; max-height: calc(100vh - 170px); overflow: visible; }
 .side { display: flex; flex-direction: column; gap: 18px; }
@@ -55,6 +55,7 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--moon); outl
 @media (max-width: 1100px) {
   .grid { grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); }
   .side { grid-column: 1 / -1; }
+  .chart { margin-left: 0; }
 }
 @media (max-width: 900px) {
   .grid { grid-template-columns: 1fr; padding: 16px 20px; }
@@ -90,11 +91,19 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--moon); outl
 .pbar i { position: absolute; top: 0; height: 4px; border-radius: 2px; opacity: 0.85; transition: all 0.3s ease; }
 .room-lines { margin-top: 8px; display: grid; gap: 4px; font-size: 13px; color: var(--text); }
 
-.chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.legend { display: flex; gap: 14px; font-family: var(--mono); font-size: 10px; color: var(--text); }
-.legend i { display: inline-block; width: 12px; height: 2px; margin-right: 6px; vertical-align: middle; }
+.chart {
+  position: relative; z-index: 3; margin-left: -36px; padding: 22px 24px 18px; border-radius: 22px;
+  background: linear-gradient(160deg, rgba(27, 31, 77, 0.55), rgba(5, 6, 15, 0.42));
+  border: 1px solid rgba(201, 195, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 30px 80px -30px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(16px) saturate(140%); -webkit-backdrop-filter: blur(16px) saturate(140%);
+}
+.chart-title { font-size: 28px; font-weight: 400; margin: 4px 0 0; color: var(--moon); text-shadow: 0 0 18px rgba(243, 227, 195, 0.3); }
+.chart-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.legend { display: flex; gap: 16px; font-family: var(--mono); font-size: 12px; color: var(--text); }
+.legend i { display: inline-block; width: 16px; height: 2px; margin-right: 6px; vertical-align: middle; }
 .chart-svg { width: 100%; margin-top: 10px; overflow: visible; }
-.chart-foot { font-size: 10px; color: rgba(168, 236, 255, 0.75); text-align: right; }
+.chart-foot { font-size: 12px; color: rgba(168, 236, 255, 0.75); text-align: right; }
 
 .debug { display: grid; gap: 8px; }
 .link { background: none; border: 0; padding: 0; text-align: left; color: var(--lavender); text-decoration: underline; font-size: 12px; }
@@ -140,7 +149,6 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--moon); outl
 .shoot-1 { right: 8%; top: 6%; width: 160px; animation: shoot 13s linear 2s infinite; }
 .shoot-2 { right: 30%; top: 2%; width: 110px; animation: shoot 17s linear 9s infinite; }
 .grain { position: absolute; left: -40px; top: -40px; width: calc(100% + 80px); height: calc(100% + 80px); mix-blend-mode: screen; animation: grainShift 0.9s steps(5) infinite; transition: opacity 0.8s; }
-.grain-coarse { top: -80px; animation-duration: 0.4s; }
 
 @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 @keyframes twinkleA { 0%, 100% { opacity: 0.9; } 50% { opacity: 0.35; } }
