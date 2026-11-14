@@ -134,6 +134,7 @@ class Mac:
             state = self.adviser.on_bar(bar)
         self.warm = self.adviser.snapshot()
         self.state: AdviserState = state if state is not None else self.adviser.on_bar(bars[0])
+        self.warm_state = self.state  # what the screen and synth show after a Reset
         self.bar = self.first - 1  # last processed bar
         self.clock = Clock(bars)
         self.synth = Synth()
@@ -151,6 +152,7 @@ class Mac:
         tick = self.clock.tick(dt)
         if tick.reset:
             self.adviser.restore(self.warm)
+            self.state = self.warm_state  # show the restored adviser now, not the last pre-reset bar
             self.bar = self.first - 1
         if tick.reset:
             self.slot_t0 = None
@@ -195,7 +197,10 @@ class Mac:
             self.paused = False
             speed = C.SPEED_BARS_PER_S[self.clock.speed_step]
             if self.slot_t0 is None:  # MELODY: line our turns up with the room's
-                self.slot_t0, self._slot_sent = now - max(0.0, pkt.bar + speed * age - self.first) / speed, {}
+                # The others started their turn clock when they played their first bar (step(), above), i.e. when
+                # their position went from `first` to `first + 1`. The room is at `est` now, so that was this long ago:
+                est = pkt.bar + speed * age
+                self.slot_t0, self._slot_sent = now - max(0.0, est - (self.first + 1)) / speed, {}
             log.info("channel %d joined the room at bar %d (heard channel %d)", self.channel, pkt.bar, pkt.channel)
 
     def on_count_in(self, lag: float = 0.0) -> None:  # COUNT-IN: heard another Mac's beat 4, `lag` s ago
