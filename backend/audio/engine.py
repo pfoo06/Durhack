@@ -59,6 +59,10 @@ class Engine:
         for a in range(0, len(s), C.BLOCK):
             self._pilot.append(s[a : a + C.BLOCK])
 
+    def send_count_in(self, samples: np.ndarray) -> None:
+        """Queue count-in clicks (peak 1.0) behind any pilots; played at COUNT_IN_GAIN_DB, not the pilot gain."""
+        self.send(np.asarray(samples, np.float32) * (10 ** (C.COUNT_IN_GAIN_DB / 20) / self.pilot_gain))
+
     def pending(self) -> int:
         """Pilot samples still queued."""
         return len(self._cur) + sum(len(a) for a in tuple(self._pilot))

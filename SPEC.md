@@ -93,9 +93,10 @@ Use these words with exactly these meanings in code, comments, pull requests and
 | **Pilot tones** | High-frequency tones (about 14–18.7 kHz) that carry data packets between Macs. |
 | **Symbol** | One tone carrying 4 bits (one of 16 tones in a channel). |
 | **Packet** | 10 symbols: a sync marker, a header, a payload and a checksum (§9.2). |
-| **Conductor** | The one Mac whose replay clock the others follow (`--conductor`). |
+| **Conductor** | The one Mac that starts the replay with a 4-beat count-in and holds the controls (`--conductor`). |
 | **Follower** | Any Mac that isn't the conductor. |
-| **Clock status** | `conductor`, `following` (locked to a heard conductor) or `free` (running alone). |
+| **Clock status** | `conductor`, or `free` (running on its own clock). `following` is no longer used (D9). |
+| **Count-in** | Four short clicks (2–6 kHz) the conductor plays when Start is pressed. On beat 4 every Mac starts at `REPLAY_START`. |
 
 ---
 
@@ -112,7 +113,7 @@ Each line is settled. To change one, raise it with the whole team. Don't change 
 | D6 | **Every adviser runs identical maths. Only the dial differs.** | Score differences then come from strategy alone |
 | D7 | **Score = rolling hedge effectiveness over a fixed window (`SCORE_WINDOW`, 24 two-hour bars), the same for everyone** | It's a standard measure, and comparable across advisers |
 | D8 | **MVP convergence = step 20% towards the leader, with trial and revert** | Simple and easy to hear. Particle swarm optimisation comes after the MVP. |
-| D9 | **One conductor sends the replay clock. Followers fall back to their own timing if it's lost.** | Keeps the room in sync without a network |
+| D9 | **One conductor starts everyone with a 4-beat audible count-in (clicks at 2–6 kHz). After beat 4 every Mac free-runs on its own clock; no clock packets are sent.** | Starts the room together without a network, and without a constant whine. A Mac's clock drifts only tens of ppm, far under one bar over the replay. |
 | D10 | **Everything stays in A major** (one chord per dial step) | Moving between strategies still sounds musical |
 | D11 | **The position is a CHF payable** (the company owes francs), hedged by holding EUR | The franc's jump is a loss, which makes a clear storm story |
 | D12 | **Trial and revert compares the score *gap* to the leader, not the raw score** (§7.4) | The market moves all scores together, so a raw-score check would revert good moves during the storm |
@@ -293,10 +294,14 @@ class Heard:                  # one successfully decoded packet
 | `MIN_TONE_DB` | 10.0 | P2 | A tone counts only if it's this far above the channel median |
 | `SPEED_BARS_PER_S` | (0, 1, 2, 4, 8, 16, 32, 64) | P2 | Bars per second for speed steps 0–7 |
 | `DEFAULT_SPEED_STEP` | 1 | P2 | 1 bar per second: the 119-bar replay takes about 2 minutes |
-| `FOLLOW_JUMP_BARS` | 8 | P2 | Bigger errors than this jump or hold, smaller ones trim (§9.4) |
-| `FOLLOW_TRIM` | 0.10 | P2 | Maximum ±10% speed adjustment while following |
-| `RESET_BACK_BARS` | 96 | P2 | If the conductor is this far behind us, treat it as a reset |
-| `CLOCK_LOST_S` | 10.0 | P2 | No clock packet for this long → status becomes `free` |
+| `COUNT_IN_CLICKS` | 4 | P2 | Clicks in the count-in; the replay starts on the last one |
+| `COUNT_IN_INTERVAL_S` | 0.5 | P2 | Time between clicks (120 bpm) |
+| `COUNT_IN_CLICK_MS` | 30 | P2 | Length of one click burst (Hann window) |
+| `COUNT_IN_BAND_HZ` | (2000, 6000) | P2 | All click energy lies in this band. Chords stop at 1.8 kHz, pilots start at 14 kHz |
+| `COUNT_IN_GAIN_DB` | −6 | P2 | Click level at playback (chords −12, pilots −18) |
+| `COUNT_IN_ONSET_DB` | 6.0 | P2 | Detector: energy at the click's partials must rise this far above its running median |
+| `COUNT_IN_TOL_S` | 0.08 | P2 | Detector: allowed error on each click spacing |
+| `COUNT_IN_FLOOR_S` | 1.0 | P2 | Detector: length of the running median (it needs half of this before it can fire) |
 | `CHORD_GAIN_DB` | −12 | P2 | Chord level (calibrated on the day) |
 | `PILOT_GAIN_DB` | −18 | P2 | Pilot level (calibrated on the day) |
 | `LOOP_HZ` | 20 | P4 | Main loop rate |
@@ -343,7 +348,7 @@ def callback(indata, outdata, frames, time_info, status):
 **2. Decoder thread** (an ordinary `threading.Thread`, daemon):
 - It takes blocks from `mic_q` (`maxsize=200`, 2 seconds) and keeps a sample counter `n`.
 - Each block's time is `t_anchor + n / SAMPLE_RATE`, where `t_anchor = time.monotonic()` at the first block.
-- It calls `decoder.feed(block, t)` (and `chord_listener.feed(block)` if enabled), and hands each `Heard` to the asyncio loop with `loop.call_soon_threadsafe(on_heard, heard)`.
+- It calls `decoder.feed(block, t)` (and `count_in.feed(block)` on a follower, and `chord_listener.feed(block)` if enabled), and hands each `Heard` to the asyncio loop with `loop.call_soon_threadsafe(on_heard, heard)`.
 
 **3. Asyncio main loop** (`app.py`, `LOOP_HZ` = 20):
 ```python
@@ -352,6 +357,8 @@ async def main_loop():
     while True:
         await asyncio.sleep(1 / LOOP_HZ)
         now = time.monotonic(); dt = now - last; last = now
+        if clock.take_count_in(lead=engine.pending() / SAMPLE_RATE):   # conductor pressed Start
+            engine.send_count_in(countin.clicks())                      # queued behind any pilot packet
         tick = clock.tick(dt)
         if tick.reset:
             adviser.restore(warm_snapshot)               # state right after warm-up
@@ -361,17 +368,15 @@ async def main_loop():
         if now - last_decide >= DECISION_PERIOD_S:
             adviser.decide(now); last_decide = now
         if engine.pending() == 0:                        # transmit back-to-back
-            pkt = clock.packet() if (conductor and send_clock_next) else adviser.packet()
-            send_clock_next = not send_clock_next
-            engine.send(modem.encode(pkt))
+            engine.send(modem.encode(adviser.packet()))
         if now - last_ws >= 1 / WS_HZ:
             await broadcast(state_message(state, bar, clock)); last_ws = now
 
 def on_heard(heard):                                     # runs on the asyncio loop
-    if isinstance(heard.packet, ClockPacket):
-        if not conductor: clock.on_clock(heard, time.monotonic())
-    else:
-        adviser.on_heard(heard)
+    adviser.on_heard(heard)                              # clock packets are no longer sent
+
+def on_count_in(lag):                                    # follower only: the decoder thread's CountInDetector fired
+    clock.on_count_in(lag); paused = False               # reset to REPLAY_START, run at DEFAULT_SPEED_STEP
 ```
 - **Startup order:**
   1. `load_bars`;
@@ -381,8 +386,9 @@ def on_heard(heard):                                     # runs on the asyncio l
   5. start `Engine` and the decoder thread;
   6. start uvicorn and the main loop.
 - **Transmit schedule:** a packet lasts 1.6 s plus 0.3 s of idle, so 1.9 s per packet.
-  - Followers send an adviser packet every 1.9 s.
-  - The conductor alternates clock and adviser packets, so each type goes out every 3.8 s.
+  - Every Mac sends an adviser packet every 1.9 s. **Nobody sends clock packets** (D9).
+  - The conductor's count-in (1.5 s between first and last click) is queued like a packet, so no pilot is sent during it and it starts after any packet already queued; `take_count_in(lead)` adds that wait to the countdown.
+  - The follower's `CountInDetector.feed(block)` also runs on the decoder thread. The conductor does not run one.
 - **Fast-forwarding:** `Clock.tick` MAY return up to 200 bars in one tick, when catching up to the conductor. Processing 200 bars takes well under 50 ms.
 
 ### 4.8 Run modes and command-line options
@@ -391,7 +397,7 @@ def on_heard(heard):                                     # runs on the asyncio l
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--channel N` | 0 | This Mac's channel (0–3). **Every Mac in the room MUST use a different one.** |
-| `--conductor` | off | This Mac sends the clock. **Exactly one Mac in the room.** |
+| `--conductor` | off | This Mac plays the count-in and owns Start, Pause, Reset and speed. **Exactly one Mac in the room.** It never listens for the count-in. |
 | `--dial D` | `START_DIALS[channel]` | Starting dial |
 | `--fake-neighbour D` | off | Also run a second adviser in-process on channel `(N+1) % 4` with a **fixed** dial D. Its packets are played through the real speaker, and this Mac hears them through the real mic. Used for testing one Mac on its own. |
 | `--loopback` | off | No sound hardware. Runs **two** full Macs in one process (channel 0 as conductor, channel 1 as follower), joined through `VirtualAir`. |
@@ -852,43 +858,36 @@ Analysis runs every `HOP` (10 ms) on the latest `FFT_N` samples (42.7 ms):
   1. Send each packet twice.
   2. Then add Hamming(7,4) error correction (a contract change).
 
-### 9.4 Shared replay clock (`replay.py`)
-**The state:** `position` (float, absolute bar index), `speed_step`, `paused`, `trim` (starts at 1.0), `last_clock_at`.
+### 9.4 Replay clock and count-in (`replay.py`, `audio/countin.py`)
+**The idea (D9):** the conductor plays 4 clicks. On beat 4 every Mac starts at `REPLAY_START`. After that every Mac free-runs on its own clock. Clocks drift by tens of ppm, which is milliseconds over 2 minutes against a 125 ms bar.
+
+**The state:** `position` (index into `bars`, the next bar to emit), `speed_step`, `paused`.
 
 **`tick(dt)`:**
 ```
-rate = SPEED_BARS_PER_S[speed_step] · trim   (0 if paused)
-new = min(position + rate·dt, replay_end + 0.999)
-bars = all bars with index in (floor(position), floor(new)], capped at 200 per tick
-position = new  (or less, if capped: carry on next tick)
-return Tick(bars, reset=<pending reset flag, then clear it>)
+if counting: count −= dt; at 0 start running, banking the overshoot as bars
+if paused: return Tick([], reset=<pending reset flag, cleared>)
+n = floor(SPEED_BARS_PER_S[speed_step] · dt + carry), capped at 200 per tick and at the last bar
+return Tick(bars[position : position + n], reset=<pending reset flag, cleared>)
 ```
-- `start()` unpauses at the current `speed_step`. On the conductor, start re-sends the last non-zero speed.
-- `pause()` sets paused. On the conductor, it broadcasts `speed_step = 0`.
-- `reset()` sets `position = replay_start` and flags a reset for the next tick.
 
-**The conductor:**
-- `packet()` returns `ClockPacket(bar=floor(position), speed_step=0 if paused else speed_step)`.
-- Its status is always `conductor`. It ignores clock packets it hears.
+**Conductor:**
+- `start()` = `reset()` + `speed_step = DEFAULT_SPEED_STEP` + a countdown of `(COUNT_IN_CLICKS − 1) · COUNT_IN_INTERVAL_S` (1.5 s). The speed is fixed for a count-in.
+- The main loop calls `take_count_in(lead)`: it returns True once per `start()`. The loop then plays `countin.clicks()` through `Engine.send_count_in` (at `COUNT_IN_GAIN_DB`, behind whatever is queued; `lead` is the queued audio in seconds and is added to the countdown). Click 1 sounds at the start of that audio, so click 4 sounds when the countdown ends.
+- A new Start, even mid-run, is a new count-in, so everyone restarts from `REPLAY_START`.
+- `pause()` stops the replay and cancels a count-in. `reset()` goes back to `REPLAY_START`, paused.
+- Pause, reset and speed are **conductor-only**. Speed changes made after beat 4 are not followed by anyone else.
+- Status is always `conductor`.
 
-**Followers: `on_clock(heard, now)`:**
-```
-p = heard.packet
-est = p.bar + SPEED_BARS_PER_S[p.speed_step] · (1.54 + (now − heard.received_at))
-        # 1.54 s = time from encoding the packet to the end of its last tone
-speed_step = p.speed_step; paused = (p.speed_step == 0)
-status = "following"; last_clock_at = now
-err = est − position
-if   err < −RESET_BACK_BARS:   reset(); position = replay_start; then fast-forward to est
-                               # the conductor was reset
-elif err > FOLLOW_JUMP_BARS:   position stays; set a catch-up target = est
-                               # tick returns the skipped bars (≤ 200 per tick)
-elif err < −FOLLOW_JUMP_BARS:  trim = 0 until err ≥ −1   # hold: never un-process bars
-else:                          trim = 1 + clamp(err / FOLLOW_JUMP_BARS, −1, 1) · FOLLOW_TRIM
-```
-- **Clock lost:** if `now − last_clock_at > CLOCK_LOST_S`, the status becomes `free`, trim resets to 1.0, and the Mac **keeps the last speed**. When a clock packet arrives again, it re-locks using the same rules.
-- **Startup:** a follower starts `free` and **paused** at `replay_start`. The first clock packet it hears starts it.
-- **Controls on a follower:** while `following`, the follower ignores start, pause, reset and speed from its own UI (the UI shows them disabled). While `free`, it accepts them.
+**Follower:** `on_count_in(lag)`: reset, `speed_step = DEFAULT_SPEED_STEP`, run now, already `lag` seconds in. Status is `free` throughout. It ignores Start, Pause, Reset and speed from its own UI (`handle` returns an error). Until it hears a count-in it sits paused at `REPLAY_START`.
+
+**The click** (`countin.clicks()`): 4 Hann-windowed bursts of `COUNT_IN_CLICK_MS`, `COUNT_IN_INTERVAL_S` apart, each the sum of four sine partials at 2.8, 3.6, 4.4 and 5.2 kHz. All energy is inside `COUNT_IN_BAND_HZ`; nothing above 8 kHz (the synth rule). Peak 1.0 before gain.
+
+**The detector** (`countin.CountInDetector.feed(block) -> float | None`), on the follower only:
+- Every `HOP`, take an `FFT_N` Hann-windowed FFT and sum the energy in the bins at the click's four partials (±1 bin).
+- An onset is that energy rising above `COUNT_IN_ONSET_DB` over the median of the last `COUNT_IN_FLOOR_S` of hops (rising edge only). Noise, steady chords and pilot packets move the median with them, so they raise no onset.
+- It fires when 4 onsets are each `COUNT_IN_INTERVAL_S ± COUNT_IN_TOL_S` after the last (other onsets in between are ignored). It returns how many seconds ago click 4 started: unread audio plus `DETECT_LAG_S` (28 ms, measured). It needs 0.5 s of listening first.
+- Own speaker: the conductor has no detector, and a follower never plays clicks.
 
 **Time conversions at the default speed (step 1, 1 bar per second, 2-hour bars):**
 | Thing | Bars | Real time |
@@ -940,7 +939,7 @@ Higher speeds (5–7) are for skipping through calm periods. Convergence is tune
   - Only bars ≤ the current bar are shown. The `history` message has the whole replay window, so the chart slices it, and never reveals the future.
   - The chart re-renders at most 4 times a second.
 - **Controls:**
-  - Enabled on the conductor, or on a follower that's `free`. Disabled (with a tooltip "following the conductor") otherwise.
+  - Start, Pause, Reset and speed work on the conductor only. On a follower the backend refuses them with "following the conductor; controls disabled" (the UI still shows them enabled: a known gap).
   - The speed control shows bars per second next to the step.
 - **Connection banner:** if the WebSocket closes, show "backend not running" and retry every 1 s.
 
@@ -1034,7 +1033,7 @@ Four people (**P1–P4**, names assigned after review). Each person runs **2–3
 | | Role | Owns (only they and their agents edit these) | Done when |
 | --- | --- | --- | --- |
 | **P1 + P3** | **Data and finance** (two people, one shared role) | `scripts/`, `data/`, `backend/data.py`, `finance.py`, `adviser.py`, `sim.py`, `tools/sweep.py`, `VirtualRoom` in `mocks.py` | The sweep passes §6.4. The simulation passes §7.6. The finance tests pass. |
-| **P2** | **Audio and music** (the critical path) | `backend/audio/`, `replay.py`, `VirtualAir` in `mocks.py`, `tools/tone_probe.py`, `tools/audition.py`, `sensors/` | Packets decode at least 90% of the time Mac to Mac at 1 m **in the hall, with the chord playing**. Followers stay within 8 bars of the conductor. The dissonance sweep sounds like a smooth slide from "fine" to "wrong" to the team. Levels are calibrated. |
+| **P2** | **Audio and music** (the critical path) | `backend/audio/`, `replay.py`, `VirtualAir` in `mocks.py`, `tools/tone_probe.py`, `tools/audition.py`, `sensors/` | Packets decode at least 90% of the time Mac to Mac at 1 m **in the hall, with the chord playing**. A follower starts within 1 bar of the conductor's beat 4 and stays within 8 bars to the end. The dissonance sweep sounds like a smooth slide from "fine" to "wrong" to the team. Levels are calibrated. |
 | **P4** | **UI, integration and demo** | `frontend/`, `backend/app.py`, CI, `README.md`, the demo script (§14) | Two Macs run the whole arc from the UI. `--smoke` passes in CI. The demo has been rehearsed 3 times. |
 
 - **Finance is two people.** P1 leads the numbers (data, hedge ratio, score, P&L). P3 leads the strategies (the adviser, convergence, sweep, simulation). They review each other's pull requests.
@@ -1058,7 +1057,7 @@ Four people (**P1–P4**, names assigned after review). Each person runs **2–3
 | **P3-C** | `feat/sim` | §7.6 | `VirtualRoom`, `sim.py` | The §7.6 pass criteria are met, with `sim.png` in the pull request |
 | **P2-A** | `feat/modem` then `feat/audio-engine` | §9.1–9.3, §4.7 | First `tools/tone_probe.py` (by +2h), then `modem.py`, then `engine.py` and `VirtualAir` | The §13 modem tests pass. Two real Macs exchange packets. |
 | **P2-B** | `feat/synth` | §8 | `synth.py`, `tools/audition.py` | The §13 synth tests pass, and the team agrees it sounds right |
-| **P2-C** | `feat/clock-sync` | §9.4 | `replay.py` | The §13 clock tests pass. In loopback, the follower stays within 8 bars. |
+| **P2-C** | `feat/clock-sync` | §9.4 | `replay.py` | The §13 clock and count-in tests pass. In loopback, the follower starts within 1 bar of the conductor. |
 | **P4-A** | `feat/ui` | §10 | The frontend, built against the mock | It renders the whole mock arc. `npm run build` passes. |
 | **P4-B** | `feat/app-wiring` | §4.7, §4.8 | `app.py` with every run mode and option | `--loopback --smoke` exits 0. `--fake-neighbour` works on a real Mac. |
 | **P4-C** | `chore/ci-and-docs` | §11, §13 | `ci.yml`, `README.md`, the demo script | CI runs pytest, the smoke test and the frontend build on every pull request |
@@ -1149,10 +1148,14 @@ Each module has one test file, `backend/tests/test_<module>.py`. Tests MUST run 
 | `test_synth.py` | **Shape and level** | `render(480)` is float32, length 480, peak ≤ 1.0, for every step and for E in {0, 0.5, 1} |
 | | **Band limit** | Over 1 s of audio at E = 0, energy above 8 kHz is at least 60 dB below the total |
 | | **Smooth** | Changing the step adds no sample-to-sample jump bigger than 0.1 |
-| `test_replay.py` | **Speed** | At speed 4, `tick(1.0)` returns 8 bars |
-| | **Follow** | Errors of +20, −20, +3 and −200 bars give, respectively: catch-up, hold, trim > 1, reset |
-| | **Lost** | 11 s with no clock packet → status `free`, the speed is kept |
-| `test_app.py` | **Smoke** | `--loopback --smoke` exits 0 |
+| `test_countin.py` | **Band** | Over 99% of click energy is in 2–6 kHz and under 1e−6 above 8 kHz |
+| | **Detects** | Count-in at 0 dB SNR (click burst power = noise power inside 2–6 kHz) with chords from the synth playing: detected once, and the lag-corrected start of beat 4 is within 15 ms |
+| | **No false start** | 0 triggers on 60 s of white noise (two levels), on chords alone, on adviser pilot packets, on 4 clicks 0.3 s or 0.8 s apart, and on only 3 clicks |
+| `test_replay.py` | **Speed** | After a count-in at speed 4, `tick(1.0)` returns 8 bars; no bars before beat 4 |
+| | **Count-in** | `start()` forces the default speed and hands over the clicks once; a queued-audio `lead` delays beat 4; a second Start restarts from `REPLAY_START`; `pause()` cancels it |
+| | **Follower** | `on_count_in()` resets to `REPLAY_START`, runs at the default speed, status stays `free`; `lag` banks bars; the conductor ignores it |
+| `test_app.py` | **Smoke** | `--loopback --smoke` exits 0: count-in heard, follower within 1 bar of the conductor, ≥3 packets decoded each |
+| | **Controls** | A follower refuses Start, Pause, Reset and speed |
 | Frontend | **Build** | `npm run build` succeeds (no frontend unit tests) |
 
 **CI** (`.github/workflows/ci.yml`, Ubuntu):
@@ -1165,7 +1168,7 @@ Each module has one test file, `backend/tests/test_<module>.py`. Tests MUST run 
 | Time | Say or do |
 | --- | --- |
 | 0:00 | "Each of these Macs is an FX hedging adviser. They're not networked. They only talk through sound." |
-| 0:15 | "It's January 2015. A UK company owes Swiss francs and hedges with euros, because the franc was pinned to the euro. Each adviser has a different strategy: how much history it trusts. You hear the strategy as the chord's root, and how well it's working as how clean the chord sounds." The conductor presses **Start**. |
+| 0:15 | "It's January 2015. A UK company owes Swiss francs and hedges with euros, because the franc was pinned to the euro. Each adviser has a different strategy: how much history it trusts. You hear the strategy as the chord's root, and how well it's working as how clean the chord sounds." The conductor presses **Start**: four clicks, then everyone begins together. (Nobody can hear a clock after that; each Mac runs on its own.) |
 | 0:25–1:05 | Calm: four clean chords. Point at the storm chart. "The correlation is almost 1, so every strategy works." |
 | about 1:05 | **The shock.** Everything turns harsh. "The Swiss National Bank removed the floor. The franc jumped more than 10% in minutes. No hedge could absorb that." |
 | 1:20–2:00 | Point at the screens: "Listening: 3 · leader Mac 2". "They're listening to each other. Mac 2's strategy is holding up best, so the others move towards it. You can hear the roots converge." |
@@ -1185,7 +1188,7 @@ Rehearse at the real speed. If the shock arrives too late, raise the speed durin
 | The data download or its terms are a problem | P1-A blocked | ECB daily rates (§5.1). The replay is less dramatic, but the logic still works. |
 | The strategies don't differ enough | The sweep fails a MUST | Follow the fix order in §6.4 |
 | Convergence looks boring | The simulation passes but sounds flat | Tune `STEP_FRACTION` and `DECISION_PERIOD_S`. Make sure the starting dials are well apart. |
-| Followers drift out of sync | More than 8 bars apart in the room test | Check the 1.54 s latency constant, and the conductor's packet rate |
+| Followers start late or not at all | A follower stays paused after Start, or is more than 1 bar behind | Raise `COUNT_IN_GAIN_DB`, lower `COUNT_IN_ONSET_DB`, check `DETECT_LAG_S`; move the follower closer; press Start again |
 | The macOS mic permission is missing | No audio input, or all zeros | Grant it to the terminal app (§4.8). Check after every restart. |
 | The audio callback overruns | `stats()["xruns"]` rising | Remove work from the callback. Raise `BLOCK` to 960. |
 | Herding: everyone converges on one strategy | Shown in the demo | It's a known limitation. Mention it in the pitch, along with the post-MVP diversity ideas (§7.7). |
@@ -1226,9 +1229,10 @@ Written by the P2 agents' PRs (#7 clock, #8 synth, #10 modem). They record where
 - Measured: 0 dB SNR → 200/200 decoded, 0 wrong; −3 dB → 100/100; **−6 dB → 4/100**. Little margin in a loud hall. `received_at` error ≤ 16 ms.
 - **Not tested on hardware:** `engine.py` (only a stub-synth check) and `tools/tone_probe.py` (never run). Both MUST run on a real Mac before the +2h hall go/no-go (§12.5).
 
-### Clock (`replay.py`)
-- `Clock` has no channel, so `packet()` returns `ClockPacket(channel=0, ...)`. **P4's `app.py` MUST substitute the Mac's own channel** before encoding.
-- Latency correction uses `PACKET_S = 10·TONE_MS + 9·GAP_MS = 1.54 s` (the spec's 1.54 s constant).
+### Clock and count-in (`replay.py`, `audio/countin.py`; issue #23)
+- Clock packets are gone (D9). `ClockPacket` stays in `contracts.py` and the modem can still encode and decode type 1, but nothing sends one and the Mac ignores any it hears. `ClockStatus` keeps `following`, which is never produced.
 - Bar numbers and `position` are indices into the `bars` list. `position` is the next bar to emit.
-- On a reset (conductor ≥ `RESET_BACK_BARS` behind), the tick returns `reset=True` plus all bars from `REPLAY_START` to the conductor's bar, **uncapped** (the 200-bar cap applies only to catch-up).
-- A follower starts on its first clock packet and doesn't need `start()`.
+- Decisions made without a spec (see the PR): clicks are four sine partials (2.8–5.2 kHz) under a 30 ms Hann window at 0.5 s spacing, played at −6 dB; the detector looks only at the bins of those partials, not the whole 2–6 kHz band, because summing the whole band missed the clicks under the loopback white noise; "0 dB SNR" in the test means click burst power equals noise power in 2–6 kHz (not the pilot-channel definition in `VirtualAir`).
+- The detector needs the follower to have been listening for 0.5 s before the first click. The smoke test waits 1.5 s before Start.
+- Speed changes after beat 4 are conductor-only and nobody follows them. A Mac started without `--conductor` cannot start by itself.
+- **Not tested on hardware:** real speaker and mic response at 2–6 kHz, hall noise, `DETECT_LAG_S`, and the real follower-to-conductor offset (loopback shows 1 bar at 20 Hz loop granularity).
