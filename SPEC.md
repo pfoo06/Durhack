@@ -422,21 +422,26 @@ def on_heard(heard):                                     # runs on the asyncio l
 ## 5. Data
 
 ### 5.1 Source
-- **HistData.com**, free "ASCII / 1-minute bar" files. Download by hand from their website (it requires clicking through, so it can't be scripted).
-- You need **January 2015** files for three pairs: **EURCHF**, **EURGBP** and **GBPCHF**.
-- Each download is a zip holding one CSV named like `DAT_ASCII_EURCHF_M1_201501.csv`.
-- **Format:** semicolons, no header, one row per minute:
+- **Dukascopy** free 1-minute bid bars, downloaded with the `dukascopy-node` command-line tool. (HistData was the first plan, but its downloads were blocked on the team's work laptops.)
+- You need **January 2015** for three pairs: **EURCHF**, **EURGBP** and **GBPCHF**. From `data/raw/`, run once per pair:
   ```
-  20150115 043000;1.201050;1.201100;1.201000;1.201050;0
-  date time      ;open    ;high    ;low     ;close   ;volume (always 0)
+  npx -y dukascopy-node -i <pair> -from 2015-01-01 -to 2015-02-01 -t m1 -f csv
   ```
-- ⚠️ **Timezone:** HistData times are **EST without daylight saving, always UTC−5**. Add 5 hours to get UTC. The shock appears at `20150115 043000` in the raw files, which is 09:30 UTC.
-- **Licence:** check HistData's terms before committing raw files. Raw files go in `data/raw/`, which **is gitignored**. Only the prepared `data/chf2015.csv` (about 150 KB) is committed.
-- **Fallback** if HistData fails: European Central Bank daily reference rates (a free CSV). It's daily only, so set `BAR_MINUTES` to 1440 and accept a less dramatic replay. Treat this as a last resort.
+  Each run writes `download/<pair>-m1-bid-2015-01-01-2015-02-01.csv`.
+- **Format:** a header row, then one row per minute. `timestamp` is milliseconds since the epoch, **already UTC**:
+  ```
+  timestamp,open,high,low,close
+  1421314200000,1.2009,1.2009,1.2009,1.2009
+  ```
+- ⚠️ **Closed-market filler:** Dukascopy writes a row for every minute, **including when the market is shut** (Sunday daytime and 1 January), repeating the last price. Those rows MUST be dropped (§5.2 step 1), or they look like hours of perfect calm. Don't drop every unchanged minute: EUR/CHF genuinely sat still for long stretches while the floor held.
+- **Licence:** Dukascopy's redistribution terms are unchecked. Raw files go in `data/raw/`, which **is gitignored**. Only the prepared `data/chf2015.csv` (about 210 KB) is committed.
+- **Fallback:** European Central Bank daily reference rates (a free CSV). It's daily only, so set `BAR_MINUTES` to 1440 and accept a less dramatic replay. Treat this as a last resort.
 
 ### 5.2 Preparation (`scripts/prepare_data.py`, run once by P1)
 Run it as `python scripts/prepare_data.py data/raw/ data/chf2015.csv`. It MUST:
-1. Read the three CSVs. Parse `date time` as `%Y%m%d %H%M%S`, add 5 hours, and make the result timezone-aware UTC. Keep **only the close** price.
+1. Read the three CSVs. Parse `timestamp` as milliseconds, timezone-aware UTC. Keep **only the close** price. Then keep only:
+   - minutes from **2 January 2015** (1 January is a holiday) up to, not including, **24 January 2015** (the end of the replay week);
+   - minutes when the market is open: **Sunday 22:00 ≤ t < Friday 22:00 UTC** (§5.3).
 2. Resample each pair to `BAR_MINUTES` buckets, labelled by **bucket start**, taking the **last close in the bucket**: `df.resample("15min", label="left", closed="left").last()`.
 3. **Inner-join** the three pairs on time. **Drop** any bucket where a pair has no data. **Never forward-fill**: filling in missing data creates fake zero returns, which distort variance.
 4. Compute:
@@ -450,18 +455,18 @@ Run it as `python scripts/prepare_data.py data/raw/ data/chf2015.csv`. It MUST:
 8. **Print and assert these checks:**
    - Row count is between 1,400 and 1,700.
    - The first row is on 2 January 2015.
-   - There's at least one row on or before `REPLAY_START`, and one on or after `REPLAY_END`.
+   - There's at least one row on or before `REPLAY_START`, and the replay's last bar exists (the bar starting at `REPLAY_END` − `BAR_MINUTES`, because the market closes at `REPLAY_END`).
    - The bar containing `SHOCK_TIME` exists and has `|rS| > 0.03`.
    - Outside 15 January, `|eurchf − F/S| / eurchf < 0.005`. This proves S and F were built the right way round.
    - Print the largest five `|rS|` with their times. They MUST be on 15 January.
 
-### 5.3 Size and timing of the data (expected; the script confirms)
+### 5.3 Size and timing of the data (confirmed by the script on the Dukascopy data)
 | | Bars | Note |
 | --- | --- | --- |
-| Warm-up, 2 to 11 January | about 568 | More than 2 × the longest half-life (256 bars), so every estimate has settled |
-| Replay, 12 to 23 January | about 952 | 472 bars in week 1, then 480 in week 2 |
-| Shock | bar about 326 of the replay | Thursday, 3 days and 9.5 hours into the replay |
-| Total | about 1,520 | Fits the 12-bit bar field in clock packets (maximum 4,095) |
+| Warm-up, 2 January to 11 January 23:45 | 576 | 88 on Friday 2 January, 480 in the week of 4 January, 8 on Sunday evening 11 January. More than 2 × the longest half-life (256 bars), so every estimate has settled. |
+| Replay, 12 to 23 January | 952 (bar indexes 576 to 1527) | 472 bars in week 1, then 480 in week 2 |
+| Shock | bar 326 of the replay (index 902) | Thursday, 3 days and 9.5 hours into the replay. `rS` = 0.188 on the shock bar. |
+| Total | 1,528 | Fits the 12-bit bar field in clock packets (maximum 4,095) |
 
 **FX market hours:** the market is open from Sunday 22:00 UTC to Friday 22:00 UTC. Hours with no trading have no bars. Half-lives count **bars, not calendar time**, so weekends don't decay anyone's memory.
 
