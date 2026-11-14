@@ -8,10 +8,10 @@ Who does what, and how to get up to speed fast. The full detail is in [SPEC.md](
 | --- | --- | --- | --- |
 | **Erinna** | P1 finance and data | P1-A data prep, P1-B finance core (PR #13), P1-C `PnL` and `history_payload` | Finance core merged (#13). Data (#16) and `PnL` + history in review. |
 | **Peter** | P2 audio and music | Modem, engine, synth, clock | Done and merged. |
-| **Xin Jie** | P4 frontend | P4-A: the UI, built against the mock WebSocket | Not started on `main`. |
+| **Xin Jie** | P4 frontend and integration | P4-A UI, P4-B `app.py` wiring | UI merged (#20). `app.py` in review. |
 | **Keya** | P3 strategy | P3-A `Adviser`, P3-B strategy sweep, P3-C `VirtualRoom` and `sim.py` | Free. Nothing started. |
 
-**Unassigned, proposed:** P4-B `app.py` wiring and P4-C CI, README and demo script. Proposal: Peter takes both now that audio is done (he knows the `Engine`, `Clock` and `VirtualAir` APIs). Xin Jie confirms, because the spec says only P4 edits `app.py`.
+**P4-B** (`app.py`) is Xin Jie's. **P4-C** (CI, README, demo script) landed in #17.
 
 ## Critical path
 1. Data (P1-A) feeds the sweep, the adviser and the simulation.

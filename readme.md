@@ -18,10 +18,10 @@ Command: `python -m backend.app [options]` from the repo root (full option list:
 | --- | --- | --- |
 | Offline simulation | `python -m backend.sim` | No |
 | Strategy sweep | `python tools/sweep.py` | No |
-| Software loopback | `python -m backend.app --loopback [--smoke]` | No (needs `backend/app.py`) |
-| Single Mac | `python -m backend.app --channel 0 --conductor --fake-neighbour 3` | No (needs `backend/app.py`) |
-| Room | `python -m backend.app --channel N [--conductor]` on each Mac | No (needs `backend/app.py`) |
-| UI mock | `npm run dev:mock` in `frontend/` | No (no `frontend/` yet) |
+| Software loopback | `python -m backend.app --loopback [--smoke]` | Yes (stand-in adviser until P3-A) |
+| Single Mac | `python -m backend.app --channel 0 --conductor --fake-neighbour 3` | Yes, not yet tried on a real Mac |
+| Room | `python -m backend.app --channel N [--conductor]` on each Mac | Yes, not yet tried on real Macs |
+| UI mock | `npm run dev:mock` in `frontend/` | Yes |
 
 ## Docs
 - [SPEC.md](SPEC.md): the single source of truth.
