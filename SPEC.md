@@ -111,7 +111,7 @@ Each line is settled. To change one, raise it with the whole team. Don't change 
 | D5 | **The strategy has exactly one dimension: reaction speed (the dial).** | It maps cleanly to one root note, and convergence on a single dimension is easy to hear |
 | D6 | **Every adviser runs identical maths. Only the dial differs.** | Score differences then come from strategy alone |
 | D7 | **Score = rolling hedge effectiveness over a fixed window (`SCORE_WINDOW`, 24 two-hour bars), the same for everyone** | It's a standard measure, and comparable across advisers |
-| D8 | **MVP convergence = step a fixed fraction (`STEP_FRACTION`, 50%) towards the leader, with trial and revert** | Simple and easy to hear. Particle swarm optimisation comes after the MVP. |
+| D8 | **MVP convergence = step a fixed fraction (`STEP_FRACTION`, 50%) towards the leader once its lead is confirmed on a fresh packet, with trial and revert** | Simple and easy to hear. The confirmation stops stale pre-shock packets pulling advisers off the best strategy (§7.3 step 5b). Particle swarm optimisation comes after the MVP. |
 | D9 | **Any Mac starts everyone with a 4-beat audible count-in (clicks at 2–6 kHz). After beat 4 every Mac free-runs on its own clock; no clock packets are sent.** | Starts the room together without a network, and without a constant whine. A Mac's clock drifts only tens of ppm, far under one bar over the replay. |
 | D10 | **Everything stays in A major** (one chord per dial step) | Moving between strategies still sounds musical |
 | D11 | **The position is a CHF payable** (the company owes francs), hedged by holding EUR | The franc's jump is a loss, which makes a clear storm story |
@@ -278,6 +278,9 @@ class Heard:                  # one successfully decoded packet
 | `STEP_FRACTION` | 0.5 | P3 | The fraction of the gap to the leader's dial moved per decision |
 | `SNAP_DISTANCE` | 0.1 | P3 | Within this distance, jump straight to the leader's dial |
 | `TRIAL_BARS` | 2 | P3 | Bars to wait before judging a move (4 h at 2-hour bars) |
+| `EXPLORE_PROB` | 0.1 | P3 | Chance per decision that a struggling adviser with nobody to follow tries a nearby dial (§7.5a) |
+| `EXPLORE_STEP` | 0.3 | P3 | Size of that try. Under the 0.6 step hysteresis, so a try alone doesn't change the chord |
+| `EXPLORE_BELOW` | 0.8 | P3 | Only explore while own score is under this, so the calm harmony is untouched |
 | `REVERT_MARGIN` | 0.05 | P3 | How much the gap may worsen before we revert |
 | `BLACKLIST_S` | 10.0 | P3 | Ignore a leader for this long after reverting a move towards it |
 | `LOST_AFTER_S` | 10.0 | P3 | Forget an adviser after this long without a packet |
@@ -697,14 +700,22 @@ class Peer:
 2. If in trial and it's finished: evaluate it (§7.4). The trial ends either way.
 3. candidates = {self} ∪ {peers not lost and not blacklisted}
    leader = the candidate with the highest score (tie → the lowest channel)
-4. If leader is self: return.
-5. If leader.score − own.score < MOVE_THRESHOLD: return.      # not worth moving
+4. If leader is self: clear the candidate and return.
+5. If leader.score − own.score < MOVE_THRESHOLD: clear the candidate and return.      # not worth moving
+5b. Confirm a new leader on a fresh packet (skip this if the leader is already the confirmed one):
+    - If there's no candidate, or the candidate isn't this leader: candidate = (leader, now). Return.
+    - If the leader's latest packet started before the candidate was set
+      (heard_at − PACKET_S ≤ candidate time): return.                                    # wait for a fresh one
+    - Otherwise clear the candidate and mark this leader confirmed.
+    (Steps 4 and 5 clear both the candidate and the confirmed leader.)
 6. If |leader.dial − dial| ≤ SNAP_DISTANCE:  new_dial = leader.dial
    else:                                     new_dial = dial + STEP_FRACTION · (leader.dial − dial)
 7. Start a trial: remember (old_dial = dial, leader channel, gap_at_move = leader.score − own.score,
    bars_at_move = bars processed so far). Set dial = new_dial and call hedger.set_half_life(4 · 2**dial).
 ```
-At the default speed (1 bar/s), a move can happen about every 2 s. A gap of 2 steps closes to under half a step (the same chord) in 2 moves (about 4 s), and is fully snapped in about 5 moves (about 10 s). That matters because on the real data the strategies only separate clearly in the last ~25 s of the replay (21–23 January). Tuned in the simulation: with `STEP_FRACTION` 0.2 the advisers never reached one chord.
+**Why step 5b (stale scores at the shock):** a packet takes about 1.6 s to send, so the score it carries can be from before a market move. On the shock bar an adviser's own score is already ~0 while the packet it last heard still says the leader is at ~0.99, so without 5b every adviser moved towards the pre-shock leader, and dial 0 (the best aftermath strategy, §6.4) left dial 0 in every simulated run. With 5b the next fresh packet shows the leader crashed too, the gap disappears, and nobody moves. A real lead is still followed, one decision (about 2 s) later, and once confirmed the adviser keeps stepping towards that leader without re-confirming until the lead ends. `PACKET_S = (TONE_MS + GAP_MS) × 10 / 1000` (§9.2).
+
+At the default speed (1 bar/s), a confirmed move can happen about every 2–4 s. A gap of 2 steps closes to under half a step (the same chord) in 2 moves (about 4 s), and is fully snapped in about 5 moves (about 10 s). That matters because on the real data the strategies only separate clearly in the last ~25 s of the replay (21–23 January). Tuned in the simulation: with `STEP_FRACTION` 0.2 the advisers never reached one chord.
 
 ### 7.4 Trial and revert (D12)
 After `TRIAL_BARS` bars:
@@ -721,6 +732,15 @@ After `TRIAL_BARS` bars:
 - **No peers heard:** `decide` finds only itself as a candidate, so it never moves. The adviser keeps hedging and playing on its own. Nothing breaks.
 - **One Mac switched off mid-demo:** it's marked lost after `LOST_AFTER_S`, and the others carry on with whoever they can still hear.
 - **The starter switched off:** the other Macs carry on at the last speed (§9.4).
+
+### 7.5a Exploration (fights herding, §15)
+In step 4 or 5 of §7.3 (nobody worth following), an adviser **explores** with probability `EXPLORE_PROB` if:
+- it currently hears at least one peer (an adviser alone never moves, §13), and
+- its own score is under `EXPLORE_BELOW` (so the calm harmony never changes).
+
+It moves its dial by ±`EXPLORE_STEP` (random sign, clamped to 0–6) and starts a normal trial against the best peer it hears. After `TRIAL_BARS` it's judged like any move (§7.4): if the gap to that peer got worse by more than `REVERT_MARGIN`, it goes back, **without** blacklisting the peer. The random generator is seeded by channel, so runs repeat.
+
+Why: once every adviser has converged there's no variety left, and if the market changed again they'd all be wrong together. Exploring keeps a little variety while things are going badly. On the real data it also lifts the mean aftermath score (`backend.sim`, seeds 0–4: 0.19–0.20 against 0.17 without exploring, at 10% loss), and every run still ends on step 0.
 
 ### 7.6 Offline simulation (`backend/sim.py`, lane P3-C)
 - Creates N advisers (default 4, dials from `START_DIALS`), runs warm-up, then the replay at `SPEED_BARS_PER_S[--speed]`, keeping simulated time as `t = bars_done / speed`.
@@ -1204,7 +1224,7 @@ Rehearse at the real speed. If the shock arrives too late, raise the speed durin
 | Followers start late or not at all | A follower stays paused after Start, or is more than 1 bar behind | Raise `COUNT_IN_GAIN_DB`, lower `COUNT_IN_ONSET_DB`, check `DETECT_LAG_S`; move the follower closer; press Start again |
 | The macOS mic permission is missing | No audio input, or all zeros | Grant it to the terminal app (§4.8). Check after every restart. |
 | The audio callback overruns | `stats()["xruns"]` rising | Remove work from the callback. Raise `BLOCK` to 960. |
-| Herding: everyone converges on one strategy | Shown in the demo | It's a known limitation. Mention it in the pitch, along with the post-MVP diversity ideas (§7.7). |
+| Herding: everyone converges on one strategy | Shown in the demo | Exploration (§7.5a) keeps some variety while scores are poor. Mention the trade-off in the pitch. |
 
 ---
 

@@ -11,6 +11,7 @@ in the app, simulated seconds in `sim.py`. The adviser never reads the clock its
 from __future__ import annotations
 
 import copy
+import random
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,6 +22,9 @@ from backend.finance import Effectiveness, Hedger, PnL
 # §8.3: the chord changes only when the dial is more than this far from the current step.
 STEP_HYSTERESIS = 0.6
 SEQ_MODULO = 16  # §9.2: the sequence number is one 4-bit symbol
+# §9.2: 10 symbols of tone plus gap. A packet heard at `received_at` started this long before, so it
+# carries the sender's state from at least this long ago.
+PACKET_S = (C.TONE_MS + C.GAP_MS) * 10 / 1000
 
 
 @dataclass
@@ -38,9 +42,10 @@ class _Trial:
     """A dial move waiting to be judged (§7.4)."""
 
     old_dial: float
-    leader: int
+    leader: int  # for an exploration: the best peer heard when it started
     gap_at_move: float
     bars_at_move: int
+    explore: bool = False  # a random try (§7.5a), not a move towards a leader
 
 
 def half_life_bars(dial: float) -> float:
@@ -66,6 +71,10 @@ class Adviser:
         self.peers: dict[int, Peer] = {}
         self.blacklist: dict[int, float] = {}  # channel → time the entry expires
         self.trial: _Trial | None = None
+        # A leader seen ahead but not yet confirmed on a fresh packet: (channel, time first seen ahead).
+        self.candidate: tuple[int, float] | None = None
+        self.confirmed: int | None = None  # the leader whose lead was confirmed and still holds
+        self._rng = random.Random(channel)  # exploration (§7.5a); seeded per channel so runs are repeatable
         self.bars = 0  # bars processed so far, warm-up included
         self._now = 0.0  # latest time seen, from decide() or on_heard()
         self._last_decide: float | None = None
@@ -138,10 +147,26 @@ class Adviser:
 
         leader, leader_score, leader_dial = self._leader(now)  # 3.
         if leader == self.channel:  # 4.
+            self.candidate = self.confirmed = None
+            self._maybe_explore(now)
             return
         gap = leader_score - self.score
         if gap < C.MOVE_THRESHOLD:  # 5. not worth moving
+            self.candidate = self.confirmed = None
+            self._maybe_explore(now)
             return
+
+        # 5b. A new leader's lead must hold on a packet it started sending after we first saw it ahead.
+        # One packet can predate a market move: at the shock, our own score is already ~0 while the
+        # packet we heard still carries the leader's pre-shock ~0.99. Once confirmed, keep following
+        # that leader while it stays ahead.
+        if leader != self.confirmed:
+            if self.candidate is None or self.candidate[0] != leader:
+                self.candidate, self.confirmed = (leader, now), None
+                return
+            if self.peers[leader].heard_at - PACKET_S <= self.candidate[1]:
+                return  # no fresh packet from this leader yet: keep waiting
+            self.candidate, self.confirmed = None, leader
 
         if abs(leader_dial - self.dial) <= C.SNAP_DISTANCE:  # 6.
             new_dial = leader_dial
@@ -149,6 +174,24 @@ class Adviser:
             new_dial = self.dial + C.STEP_FRACTION * (leader_dial - self.dial)
 
         self.trial = _Trial(old_dial=self.dial, leader=leader, gap_at_move=gap, bars_at_move=self.bars)  # 7.
+        self._set_dial(new_dial)
+
+    def _maybe_explore(self, now: float) -> None:
+        """With nobody to follow and our own score poor, now and then try a nearby dial (§7.5a).
+
+        Keeps some variety in the room, so a group that has all converged can still find a better
+        strategy if the market changes again (the herding risk, §15). Judged like a move, against the
+        best peer heard. An adviser that hears nobody never explores (§13 "Alone").
+        """
+        peers = self._usable_peers(now)
+        if not peers or self.score >= C.EXPLORE_BELOW or self._rng.random() >= C.EXPLORE_PROB:
+            return
+        new_dial = self._clamp_dial(self.dial + self._rng.choice((-1.0, 1.0)) * C.EXPLORE_STEP)
+        if new_dial == self.dial:
+            return
+        best = max(peers, key=lambda ch: (peers[ch].score, -ch))
+        self.trial = _Trial(old_dial=self.dial, leader=best, gap_at_move=peers[best].score - self.score,
+                            bars_at_move=self.bars, explore=True)
         self._set_dial(new_dial)
 
     def _judge_trial(self, now: float) -> None:
@@ -162,8 +205,9 @@ class Adviser:
         gap_now = peer.score - self.score
         if gap_now > trial.gap_at_move + C.REVERT_MARGIN:
             self._set_dial(trial.old_dial)
-            self.blacklist[trial.leader] = now + C.BLACKLIST_S
-            del self.peers[trial.leader]
+            if not trial.explore:  # a bad try is our fault, not the peer's
+                self.blacklist[trial.leader] = now + C.BLACKLIST_S
+                del self.peers[trial.leader]
 
     # ----- resets --------------------------------------------------------------------------
 
