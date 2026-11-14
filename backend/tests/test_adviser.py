@@ -9,6 +9,7 @@ from backend.adviser import Adviser, next_step
 from backend.contracts import AdviserPacket, Bar, ClockPacket, Heard
 
 T0 = datetime(2015, 1, 12, tzinfo=timezone.utc)
+FIRST = C.STEP_FRACTION * 5.0  # dial after one move from 0 towards a leader at 5
 
 
 def bars(n: int, seed: int = 0) -> list[Bar]:
@@ -39,7 +40,7 @@ def test_move() -> None:
     a.score = 0.5
     hear(a, 1, 0.6, 5.0, at=100.0)
     a.decide(100.0)
-    assert a.dial == 1.0  # 0 + 0.2 · (5 − 0)
+    assert a.dial == FIRST  # 0 + STEP_FRACTION · (5 − 0)
     assert a.trial is not None and a.state().in_trial
 
 
@@ -48,8 +49,8 @@ def test_move_changes_half_life() -> None:
     a.score = 0.5
     hear(a, 1, 0.6, 5.0, at=100.0)
     a.decide(100.0)
-    assert a.state().half_life_bars == C.H_MIN_BARS * 2.0
-    assert a._hedger.half_life_bars == C.H_MIN_BARS * 2.0
+    assert a.state().half_life_bars == C.H_MIN_BARS * 2.0**FIRST
+    assert a._hedger.half_life_bars == C.H_MIN_BARS * 2.0**FIRST
 
 
 def test_no_move_below_threshold() -> None:
@@ -73,7 +74,7 @@ def test_revert_and_blacklist() -> None:
     a.score = 0.5
     hear(a, 1, 0.6, 5.0, at=100.0)
     a.decide(100.0)
-    assert a.dial == 1.0
+    assert a.dial == FIRST
 
     advance(a, C.TRIAL_BARS)
     a.score = 0.4  # gap was 0.1, now 0.2: worse by 0.1 > REVERT_MARGIN
@@ -92,7 +93,7 @@ def test_revert_and_blacklist() -> None:
     later = 103.0 + C.BLACKLIST_S + 1
     hear(a, 1, 0.9, 5.0, at=later)
     a.decide(later)
-    assert a.dial == 1.0
+    assert a.dial == FIRST
 
 
 def test_trial_kept_when_gap_holds() -> None:
@@ -105,8 +106,8 @@ def test_trial_kept_when_gap_holds() -> None:
     hear(a, 1, 0.4, 5.0, at=103.0)
     a.decide(103.0)
     # Kept, and the trial ended. The leader is still 0.1 ahead, so the same decide moves again (§7.3).
-    assert a.dial == 1.0 + C.STEP_FRACTION * (5.0 - 1.0)
-    assert a.trial is not None and a.trial.old_dial == 1.0
+    assert a.dial == FIRST + C.STEP_FRACTION * (5.0 - FIRST)
+    assert a.trial is not None and a.trial.old_dial == FIRST
 
 
 def test_no_decision_during_trial() -> None:
@@ -116,7 +117,7 @@ def test_no_decision_during_trial() -> None:
     a.decide(100.0)
     advance(a, C.TRIAL_BARS - 1)
     a.decide(103.0)
-    assert a.dial == 1.0 and a.trial is not None
+    assert a.dial == FIRST and a.trial is not None
 
 
 def test_decide_rate_limited() -> None:
@@ -127,7 +128,7 @@ def test_decide_rate_limited() -> None:
     a.decide(100.5)  # within DECISION_PERIOD_S: no action
     assert a.dial == 0.0
     a.decide(100.0 + C.DECISION_PERIOD_S)
-    assert a.dial == 1.0
+    assert a.dial == FIRST
 
 
 def test_lost_peer_is_not_leader() -> None:
