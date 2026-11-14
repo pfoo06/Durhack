@@ -21,6 +21,9 @@ from backend.finance import Effectiveness, Hedger, PnL
 # §8.3: the chord changes only when the dial is more than this far from the current step.
 STEP_HYSTERESIS = 0.6
 SEQ_MODULO = 16  # §9.2: the sequence number is one 4-bit symbol
+# §9.2: 10 symbols of tone plus gap. A packet heard at `received_at` started this long before, so it
+# carries the sender's state from at least this long ago.
+PACKET_S = (C.TONE_MS + C.GAP_MS) * 10 / 1000
 
 
 @dataclass
@@ -66,6 +69,8 @@ class Adviser:
         self.peers: dict[int, Peer] = {}
         self.blacklist: dict[int, float] = {}  # channel → time the entry expires
         self.trial: _Trial | None = None
+        # A leader seen ahead but not yet confirmed on a fresh packet: (channel, time first seen ahead).
+        self.candidate: tuple[int, float] | None = None
         self.bars = 0  # bars processed so far, warm-up included
         self._now = 0.0  # latest time seen, from decide() or on_heard()
         self._last_decide: float | None = None
@@ -138,10 +143,22 @@ class Adviser:
 
         leader, leader_score, leader_dial = self._leader(now)  # 3.
         if leader == self.channel:  # 4.
+            self.candidate = None
             return
         gap = leader_score - self.score
         if gap < C.MOVE_THRESHOLD:  # 5. not worth moving
+            self.candidate = None
             return
+
+        # 5b. Confirm the lead on a packet the leader started sending after we first saw it ahead.
+        # One packet can predate a market move: at the shock, our own score is already ~0 while the
+        # packet we heard still carries the leader's pre-shock ~0.99.
+        if self.candidate is None or self.candidate[0] != leader:
+            self.candidate = (leader, now)
+            return
+        if self.peers[leader].heard_at - PACKET_S <= self.candidate[1]:
+            return  # no fresh packet from this leader yet: keep waiting
+        self.candidate = None
 
         if abs(leader_dial - self.dial) <= C.SNAP_DISTANCE:  # 6.
             new_dial = leader_dial

@@ -112,7 +112,7 @@ Each line is settled. To change one, raise it with the whole team. Don't change 
 | D5 | **The strategy has exactly one dimension: reaction speed (the dial).** | It maps cleanly to one root note, and convergence on a single dimension is easy to hear |
 | D6 | **Every adviser runs identical maths. Only the dial differs.** | Score differences then come from strategy alone |
 | D7 | **Score = rolling hedge effectiveness over a fixed window (`SCORE_WINDOW`, 24 two-hour bars), the same for everyone** | It's a standard measure, and comparable across advisers |
-| D8 | **MVP convergence = step a fixed fraction (`STEP_FRACTION`, 50%) towards the leader, with trial and revert** | Simple and easy to hear. Particle swarm optimisation comes after the MVP. |
+| D8 | **MVP convergence = step a fixed fraction (`STEP_FRACTION`, 50%) towards the leader once its lead is confirmed on a fresh packet, with trial and revert** | Simple and easy to hear. The confirmation stops stale pre-shock packets pulling advisers off the best strategy (§7.3 step 5b). Particle swarm optimisation comes after the MVP. |
 | D9 | **One conductor starts everyone with a 4-beat audible count-in (clicks at 2–6 kHz). After beat 4 every Mac free-runs on its own clock; no clock packets are sent.** | Starts the room together without a network, and without a constant whine. A Mac's clock drifts only tens of ppm, far under one bar over the replay. |
 | D10 | **Everything stays in A major** (one chord per dial step) | Moving between strategies still sounds musical |
 | D11 | **The position is a CHF payable** (the company owes francs), hedged by holding EUR | The franc's jump is a loss, which makes a clear storm story |
@@ -698,14 +698,21 @@ class Peer:
 2. If in trial and it's finished: evaluate it (§7.4). The trial ends either way.
 3. candidates = {self} ∪ {peers not lost and not blacklisted}
    leader = the candidate with the highest score (tie → the lowest channel)
-4. If leader is self: return.
-5. If leader.score − own.score < MOVE_THRESHOLD: return.      # not worth moving
+4. If leader is self: clear the candidate and return.
+5. If leader.score − own.score < MOVE_THRESHOLD: clear the candidate and return.      # not worth moving
+5b. Confirm the lead on a fresh packet:
+    - If there's no candidate, or the candidate isn't this leader: candidate = (leader, now). Return.
+    - If the leader's latest packet started before the candidate was set
+      (heard_at − PACKET_S ≤ candidate time): return.                                    # wait for a fresh one
+    - Otherwise clear the candidate and carry on.
 6. If |leader.dial − dial| ≤ SNAP_DISTANCE:  new_dial = leader.dial
    else:                                     new_dial = dial + STEP_FRACTION · (leader.dial − dial)
 7. Start a trial: remember (old_dial = dial, leader channel, gap_at_move = leader.score − own.score,
    bars_at_move = bars processed so far). Set dial = new_dial and call hedger.set_half_life(4 · 2**dial).
 ```
-At the default speed (1 bar/s), a move can happen about every 2 s. A gap of 2 steps closes to under half a step (the same chord) in 2 moves (about 4 s), and is fully snapped in about 5 moves (about 10 s). That matters because on the real data the strategies only separate clearly in the last ~25 s of the replay (21–23 January). Tuned in the simulation: with `STEP_FRACTION` 0.2 the advisers never reached one chord.
+**Why step 5b (stale scores at the shock):** a packet takes about 1.6 s to send, so the score it carries can be from before a market move. On the shock bar an adviser's own score is already ~0 while the packet it last heard still says the leader is at ~0.99, so without 5b every adviser moved towards the pre-shock leader, and dial 0 (the best aftermath strategy, §6.4) left dial 0 in every simulated run. With 5b the next fresh packet shows the leader crashed too, the gap disappears, and nobody moves. A real lead is still followed, one decision (about 2 s) later. `PACKET_S = (TONE_MS + GAP_MS) × 10 / 1000` (§9.2).
+
+At the default speed (1 bar/s), a confirmed move can happen about every 2–4 s. A gap of 2 steps closes to under half a step (the same chord) in 2 moves (about 4 s), and is fully snapped in about 5 moves (about 10 s). That matters because on the real data the strategies only separate clearly in the last ~25 s of the replay (21–23 January). Tuned in the simulation: with `STEP_FRACTION` 0.2 the advisers never reached one chord.
 
 ### 7.4 Trial and revert (D12)
 After `TRIAL_BARS` bars:
