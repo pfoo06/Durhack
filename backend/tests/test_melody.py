@@ -75,3 +75,20 @@ def test_melody_never_fires_the_count_in_detector():
         for _ in range(60)])
     audio = audio + rng.standard_normal(len(audio)).astype(np.float32) * 1e-3  # a mic is never digitally silent
     assert all(det.feed(audio[a : a + 480]) is None for a in range(0, len(audio), 480))
+
+
+def test_four_macs_taking_turns_with_clock_error():
+    """Every Mac hears the other three, 6 cycles, with each Mac's slot clock up to 150 ms off."""
+    sr, slot = C.SAMPLE_RATE, int(C.MELODY_SLOT_S * C.SAMPLE_RATE)
+    offsets, mix, sent = (0, 0.1, -0.1, 0.15), np.zeros(25 * slot + sr, np.float32), []
+    for k in range(24):
+        c = k % 4
+        p = AdviserPacket(c, k % 16, (k * 37 % 100) / 100, (k * 11 % 60) / 10)
+        a = melody.encode(p) * 10 ** (C.MELODY_GAIN_DB / 20)
+        s = int(k * slot + offsets[c] * sr) + slot // 4
+        mix[s : s + len(a)] += a
+        sent.append((c, p.seq))
+    audio = VirtualAir(0.0, 10 ** (C.PILOT_GAIN_DB / 20)).mix([mix])
+    for me in range(4):
+        heard, _ = decode(me, audio)
+        assert sorted((h.packet.channel, h.packet.seq) for h in heard) == sorted(x for x in sent if x[0] != me)

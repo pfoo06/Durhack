@@ -1258,3 +1258,4 @@ Written by the P2 agents' PRs (#7 clock, #8 synth, #10 modem). They record where
 - Turns need all Macs to start from the same count-in. At −3 dB the follower's count-in detection (3 dB margin, above) is the weak link, and a late follower collides with the conductor's turns.
 - Tests prove the count-in detector never fires on 60 random packets at 1.4 s cadence under −60 dBFS mic noise. With **digital silence** under it, the detector still fires (note leakage against a zero floor): not a real-mic case.
 - **Not tested on hardware:** speaker and mic response at 2–8 kHz, how it sounds in the hall, and slot alignment between two real Macs.
+- Four Macs in turn (6 cycles, 0 dB, slot clocks up to ±150 ms off): every Mac decoded all 18 packets from the other three, none crossed. With ±0.5 s clock error only about half got through, so the tolerance is roughly ±0.25 s (0.3 guard plus the 0.35 s into-slot start). Real two-Mac offset is untested.
