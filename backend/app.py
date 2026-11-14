@@ -134,10 +134,12 @@ class Mac:
         self.synth.set(self.state.step, self.state.score)
         self.paused = True
         self._last_decide = -1e9
+        self._now = 0.0  # latest main-loop time, for the age of what we've heard
         self.history = history_payload(bars)
 
     # --- the main-loop body ---
     def step(self, dt: float, now: float) -> None:
+        self._now = now
         tick = self.clock.tick(dt)
         if tick.reset:
             self.adviser.restore(self.warm)
@@ -216,7 +218,17 @@ class Mac:
                             "halfLifeHours": round(s.half_life_bars * C.BAR_MINUTES / 60, 2), "h": round(s.h, 4),
                             "score": round(s.score, 4), "pnlUnhedgedPct": round(s.pnl_unhedged_pct, 3),
                             "pnlHedgedPct": round(s.pnl_hedged_pct, 3), "leaderChannel": s.leader_channel,
-                            "heard": s.heard, "inTrial": s.in_trial}}
+                            "heard": s.heard, "inTrial": s.in_trial},
+                "peers": self.peers_view()}
+
+    def peers_view(self) -> list[dict]:
+        """The other Macs this one currently hears: their strategy and score, for the UI (§10.2)."""
+        out = []
+        for ch, p in sorted(getattr(self.adviser, "peers", {}).items()):
+            age = self._now - p.heard_at
+            if age <= C.LOST_AFTER_S:
+                out.append({"channel": ch, "dial": round(p.dial, 3), "score": round(p.score, 4), "ageS": round(age, 1)})
+        return out
 
 
 # ---------------------------------------------------------------- software loopback (SPEC §4.8)

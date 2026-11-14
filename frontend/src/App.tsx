@@ -5,8 +5,8 @@ import { Orb } from "./components/Orb";
 import { Sky } from "./components/Sky";
 import { StatusPanel } from "./components/StatusPanel";
 import { StormChart } from "./components/StormChart";
-import { CLASH_BELOW, type Phase } from "./theme";
-import { backendUrl, useStorm, useThrottled } from "./useStorm";
+import { CLASH_BELOW, fmtHours, macColor, styleName, type Phase } from "./theme";
+import { backendUrl, useStorm, useThrottled, useTrails } from "./useStorm";
 
 const CHART_MS = 250; // ≤ 4 chart renders per second (SPEC §10.1)
 const debug = new URLSearchParams(location.search).has("debug");
@@ -15,6 +15,7 @@ export default function App() {
   const { conn, hello, history, state, error, send } = useStorm(backendUrl());
   const [preview, setPreview] = useState<number | null>(null);
   const chartBar = useThrottled(state?.bar ?? -1, CHART_MS);
+  const trails = useTrails(state);
 
   const a = state?.adviser;
   const score = preview ?? a?.score ?? 1;
@@ -22,16 +23,22 @@ export default function App() {
   const phase: Phase = !afterShock ? 0 : score < CLASH_BELOW ? 1 : 2;
   const warmth = phase === 2 ? 1 : 0;
   const clockText = state?.clock === "free" ? "running" : "waiting for count-in";
+  const channel = hello?.channel ?? a?.channel ?? 0;
+  const color = macColor(channel);
 
   return (
-    <div className="app">
+    <div className="app" style={{ ["--mac" as string]: color }}>
       <Sky score={score} warmth={warmth} />
       <Banner conn={conn} />
 
       <header className="top">
         <div>
+          <div className="mac-id">
+            <i />Mac {channel} · {a ? styleName(a.dial) : "…"}
+            {a && <span className="mac-mem"> {fmtHours(a.halfLifeHours)} h memory</span>}
+          </div>
           <span className="caps brand">Storm Chorus</span>
-          <span className="caps dim"> · Mac {hello?.channel ?? "?"} (channel {hello?.channel ?? "?"}) · {clockText}</span>
+          <span className="caps dim"> · channel {channel} · {clockText}</span>
         </div>
         <div className={`conn conn-${conn}`}><i />{conn === "open" ? "connected" : "disconnected"}</div>
       </header>
@@ -41,11 +48,11 @@ export default function App() {
         <div className="stage">
           {a && hello && (
             <Orb score={score} step={a.step} chords={hello.chords} dial={a.dial} warmth={warmth}
-              channel={a.channel} leaderChannel={a.leaderChannel} heard={a.heard} />
+              channel={a.channel} leaderChannel={a.leaderChannel} heard={a.heard} peers={state?.peers ?? []} color={color} />
           )}
         </div>
         <aside className="side">
-          {hello && <StormChart history={history} bar={chartBar} shockTime={hello.shockTime} />}
+          {hello && <StormChart history={history} bar={chartBar} shockTime={hello.shockTime} trails={trails} channel={channel} />}
           {debug && (
             <label className="panel debug">
               <span className="caps">Preview score (debug only)</span>

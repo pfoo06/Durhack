@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import type { PeerView } from "../protocol";
 import {
   C, CHORD_NOTES, CLASH_BELOW, SPARKLE, TRITONE_BELOW,
-  chordQuality, chordShort, clamp01, clashNote, mix, prefersReducedMotion, tritoneNote,
+  chordQuality, chordShort, clamp01, clashNote, macColor, mix, prefersReducedMotion, tritoneNote,
 } from "../theme";
 
 /**
@@ -18,6 +19,8 @@ interface Props {
   dial: number;
   warmth: number;
   channel: number;
+  peers: PeerView[]; // the other Macs it hears, drawn as beads on the dial
+  color: string; // this Mac's colour
   leaderChannel: number;
   heard: number;
 }
@@ -53,7 +56,7 @@ function moon(k: number): string {
   return `M0 ${-r} A${r} ${r} 0 0 1 0 ${r} A${rx.toFixed(2)} ${r} 0 0 ${sweep} 0 ${-r}Z`;
 }
 
-export function Orb({ score, step, chords, dial, warmth, channel, leaderChannel, heard }: Props) {
+export function Orb({ score, step, chords, dial, warmth, channel, leaderChannel, heard, peers, color }: Props) {
   const sim = useRef({ t: 0, e: score, w: warmth, phi: [0, 2.1, 4.2, 1, 3], beat: [0, 0, 0, 0, 0], step, prevStep: step, changeAt: -10 });
   const [, setFrame] = useState(0);
   const target = useRef({ score, step, warmth });
@@ -183,8 +186,20 @@ export function Orb({ score, step, chords, dial, warmth, channel, leaderChannel,
           </g>
         );
       })}
-      <circle cx={beadX} cy={beadY} r="14" fill={lav} opacity="0.45" filter="url(#oBlurM)" />
-      <circle cx={beadX} cy={beadY} r="4" fill="#ffffff" />
+      {/* the other Macs' strategies on the same dial: convergence is their beads sliding onto ours */}
+      {peers.filter((p) => p.channel !== channel).map((p) => {
+        const th = Math.PI + (p.dial * Math.PI) / 6, lead = p.channel === leaderChannel;
+        const x = CX + DIAL_R * Math.cos(th), y = ARCH_CY + DIAL_R * Math.sin(th);
+        return (
+          <g key={p.channel}>
+            {lead && <circle cx={x} cy={y} r="13" fill="none" stroke={C.gold} strokeWidth="1.6" />}
+            <circle cx={x} cy={y} r="7" fill={macColor(p.channel)} opacity="0.9" />
+            <text x={x} y={y - 16} textAnchor="middle" className="t-mono" fontSize="10" fill={macColor(p.channel)}>{p.channel}</text>
+          </g>
+        );
+      })}
+      <circle cx={beadX} cy={beadY} r="16" fill={color} opacity="0.5" filter="url(#oBlurM)" />
+      <circle cx={beadX} cy={beadY} r="6" fill={color} stroke="#ffffff" strokeWidth="1.5" />
 
       {/* the orb */}
       <g>

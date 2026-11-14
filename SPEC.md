@@ -994,7 +994,8 @@ Not in v1: a list of every peer, or a debug spectrum view. Add them only if tuni
   "modem": "pilot",                                           // "pilot" | "melody": what this Mac sends (§9.6)
   "adviser": { "channel": 1, "dial": 3.4, "step": 3, "chord": "D", "halfLifeHours": 10.6,
                "h": 0.62, "score": 0.71, "pnlUnhedgedPct": -14.2, "pnlHedgedPct": -12.9,
-               "leaderChannel": 2, "heard": 3, "inTrial": true } }
+               "leaderChannel": 2, "heard": 3, "inTrial": true },
+  "peers": [ { "channel": 2, "dial": 1.2, "score": 0.74, "ageS": 1.3 } ] }  // the Macs this one hears (last LOST_AFTER_S)
 
 // UI → backend
 { "type": "control", "action": "start" }      // or "pause" or "reset"
