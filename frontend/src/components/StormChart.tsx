@@ -1,0 +1,93 @@
+import { useMemo } from "react";
+import type { HistoryBar } from "../protocol";
+import { C } from "../theme";
+
+/**
+ * S and F rebased to 100, rolling correlation ρ (−1 to 1), the shock marker and the replay position.
+ * Only bars up to `bar` are drawn — the chart never reveals the future (SPEC §10.1).
+ */
+const W = 360, TOP = 12, PRICE_H = 150, RHO_TOP = 196, RHO_H = 56;
+
+export function StormChart({ history, bar, shockTime }: { history: HistoryBar[]; bar: number; shockTime: string }) {
+  const geo = useMemo(() => {
+    if (history.length < 2) return null;
+    const i0 = history[0].i, i1 = history[history.length - 1].i;
+    let lo = Infinity, hi = -Infinity;
+    for (const b of history) { lo = Math.min(lo, b.S, b.F); hi = Math.max(hi, b.S, b.F); }
+    lo = Math.floor(lo - 1); hi = Math.ceil(hi + 1);
+    const x = (i: number) => ((i - i0) / (i1 - i0)) * W;
+    const y = (v: number) => TOP + PRICE_H - ((v - lo) / (hi - lo)) * PRICE_H;
+    const yr = (r: number) => RHO_TOP + RHO_H / 2 - (Math.max(-1, Math.min(1, r)) * RHO_H) / 2;
+    const shockMs = Date.parse(shockTime);
+    const shock = history.find((b) => Date.parse(b.time) >= shockMs);
+    const ticks: number[] = [];
+    const stepT = hi - lo > 24 ? 10 : 5;
+    for (let v = Math.ceil(lo / stepT) * stepT; v <= hi; v += stepT) ticks.push(v);
+    const days = history.filter((b) => b.time.endsWith("T00:00:00Z"));
+    return { i0, x, y, yr, shockX: shock ? x(shock.i) : null, ticks, days };
+  }, [history, shockTime]);
+
+  if (!geo) return <section className="panel chart"><div className="caps">The storm</div><p className="sub">Waiting for history…</p></section>;
+
+  const shown = history.filter((b) => b.i <= bar);
+  const line = (k: "S" | "F") => shown.map((b, n) => `${n ? "L" : "M"}${geo.x(b.i).toFixed(1)} ${geo.y(b[k]).toFixed(1)}`).join("");
+  const rhoLine = shown.map((b, n) => `${n ? "L" : "M"}${geo.x(b.i).toFixed(1)} ${geo.yr(b.rho).toFixed(1)}`).join("");
+  const last = shown[shown.length - 1];
+  const px = last ? geo.x(last.i) : 0;
+
+  return (
+    <section className="panel chart" aria-label="Storm chart">
+      <div className="chart-head">
+        <span className="caps">The storm · rebased to 100</span>
+        <span className="legend">
+          <span><i style={{ background: C.flareSoft }} />S franc {last ? last.S.toFixed(1) : "–"}</span>
+          <span><i style={{ background: C.ice }} />F euro {last ? last.F.toFixed(1) : "–"}</span>
+        </span>
+      </div>
+      <svg viewBox={`-30 0 ${W + 34} 272`} className="chart-svg" role="img" aria-label="Franc and euro prices with their rolling correlation">
+        <defs>
+          <filter id="cTrail" x="-10%" y="-60%" width="120%" height="220%"><feGaussianBlur stdDeviation="3" /></filter>
+        </defs>
+        {geo.ticks.map((v) => (
+          <g key={v}>
+            <line x1="0" x2={W} y1={geo.y(v)} y2={geo.y(v)} stroke="rgba(201,195,255,0.08)" />
+            <text x="-6" y={geo.y(v) + 3} textAnchor="end" className="t-mono" fontSize="9" fill="rgba(201,195,255,0.55)">{v}</text>
+          </g>
+        ))}
+        {geo.shockX !== null && (
+          <g>
+            <line x1={geo.shockX} x2={geo.shockX} y1={TOP - 6} y2={RHO_TOP + RHO_H} stroke={C.flareSoft} strokeDasharray="2 3" opacity="0.75" />
+            <text x={geo.shockX + 5} y={TOP + 4} className="t-serif" fontSize="12" fill="#ffd3dc">the cap breaks</text>
+            <text x={geo.shockX + 5} y={TOP + 16} className="t-mono" fontSize="8" fill="rgba(255,211,220,0.7)">15 JAN · 09:30</text>
+          </g>
+        )}
+        <path d={line("F")} fill="none" stroke={C.ice} strokeWidth="4" opacity="0.3" filter="url(#cTrail)" />
+        <path d={line("S")} fill="none" stroke="#ff8fa6" strokeWidth="5" opacity="0.4" filter="url(#cTrail)" />
+        <path d={line("F")} fill="none" stroke={C.ice} strokeWidth="1.2" strokeLinejoin="round" />
+        <path d={line("S")} fill="none" stroke="#ffd3dc" strokeWidth="1.4" strokeLinejoin="round" />
+
+        <rect x="0" y={RHO_TOP} width={W} height={RHO_H} rx="6" fill="rgba(0,0,0,0.2)" />
+        <line x1="0" x2={W} y1={geo.yr(0)} y2={geo.yr(0)} stroke="rgba(201,195,255,0.15)" strokeDasharray="1 4" />
+        <text x="-6" y={geo.yr(1) + 6} textAnchor="end" className="t-mono" fontSize="8" fill="rgba(201,195,255,0.5)">1</text>
+        <text x="-6" y={geo.yr(0) + 3} textAnchor="end" className="t-mono" fontSize="8" fill="rgba(201,195,255,0.5)">0</text>
+        <text x="-6" y={geo.yr(-1)} textAnchor="end" className="t-mono" fontSize="8" fill="rgba(201,195,255,0.5)">−1</text>
+        <path d={rhoLine} fill="none" stroke={C.ice} strokeWidth="1.3" opacity="0.9" />
+        <text x="4" y={RHO_TOP + 11} className="t-caps" fontSize="7" fill="rgba(168,236,255,0.65)">CORRELATION ρ</text>
+
+        {last && (
+          <g>
+            <line x1={px} x2={px} y1={TOP - 6} y2={RHO_TOP + RHO_H} stroke="rgba(255,255,255,0.45)" />
+            <circle cx={px} cy={geo.y(last.S)} r="3" fill="#ffffff" />
+            <circle cx={px} cy={geo.y(last.F)} r="2.4" fill={C.ice} />
+          </g>
+        )}
+        {geo.days.filter((_, k) => k % 2 === 0).map((b) => (
+          <text key={b.i} x={geo.x(b.i)} y="268" textAnchor="middle" className="t-mono" fontSize="8" fill="rgba(201,195,255,0.5)">
+            {new Date(b.time).getUTCDate()} Jan
+          </text>
+        ))}
+      </svg>
+      <div className="chart-foot mono">ρ {last ? last.rho.toFixed(2) : "–"}</div>
+    </section>
+  );
+}

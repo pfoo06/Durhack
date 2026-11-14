@@ -8,8 +8,10 @@ Keep it short: facts, decisions, and who's working on what. Not a diary.
 Durhack hackathon project. Team: Peter Foo, Erinna Anthony, Xin Jie.
 - Idea: _TBD_
 - Stack: _TBD_
-- Run: `python -m backend.app` (not written yet, P4). Spec: SPEC.md.
+- Run: `python -m backend.app --channel N [--conductor]`, then open http://localhost:8000 (build the UI first). No sound hardware: `python -m backend.app --loopback [--smoke]`. Spec: SPEC.md.
+- `backend/app.py` uses a stand-in adviser that never moves until `backend/adviser.py` (P3-A) lands; it switches automatically.
 - Test: `python -m pytest backend` (25 pass: modem, synth, replay).
+- UI: `cd frontend && npm install && npm run dev:mock` (mock backend + Vite on :5173). Build: `npm run build`. See `frontend/README.md`.
 
 ## Who's working on what
 Claim an area before starting so agents don't collide. Remove the line when it's done.
