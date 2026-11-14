@@ -1,3 +1,6 @@
 .env
 node_modules/
 sensors/lid
+
+__pycache__/
+.claude/worktrees/
