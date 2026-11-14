@@ -16,7 +16,6 @@ export function Sky({ score, warmth }: { score: number; warmth: number }) {
     return [field(110, 0.4, 0.9), field(70, 0.5, 1.1), field(24, 0.9, 1.6)];
   }, []);
 
-  const noise = Math.max(0, Math.min(1, (0.2 - score) / 0.2));
   return (
     <div className="sky" aria-hidden="true">
       <div className="wash wash-calm" style={{ opacity: 0.3 + 0.7 * score * (1 - warmth) }} />
@@ -32,10 +31,6 @@ export function Sky({ score, warmth }: { score: number; warmth: number }) {
       <svg className="grain" style={{ opacity: 0.05 + 0.1 * (1 - score) }}>
         <filter id="grainFine"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves={2} stitchTiles="stitch" /><feColorMatrix type="saturate" values="0" /></filter>
         <rect width="100%" height="100%" filter="url(#grainFine)" />
-      </svg>
-      <svg className="grain grain-coarse" style={{ opacity: noise * 0.22 + (1 - score) * 0.03 }}>
-        <filter id="grainCoarse"><feTurbulence type="fractalNoise" baseFrequency="0.32" numOctaves={1} stitchTiles="stitch" /><feColorMatrix type="saturate" values="0" /></filter>
-        <rect width="100%" height="100%" filter="url(#grainCoarse)" />
       </svg>
     </div>
   );
