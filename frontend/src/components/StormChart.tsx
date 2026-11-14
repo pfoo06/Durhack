@@ -6,7 +6,7 @@ import { C } from "../theme";
  * S and F rebased to 100, rolling correlation ρ (−1 to 1), the shock marker and the replay position.
  * Only bars up to `bar` are drawn — the chart never reveals the future (SPEC §10.1).
  */
-const W = 360, TOP = 12, PRICE_H = 150, RHO_TOP = 196, RHO_H = 56;
+const W = 440, TOP = 16, PRICE_H = 200, RHO_TOP = 250, RHO_H = 64, H = 340;
 
 export function StormChart({ history, bar, shockTime }: { history: HistoryBar[]; bar: number; shockTime: string }) {
   const geo = useMemo(() => {
@@ -38,33 +38,36 @@ export function StormChart({ history, bar, shockTime }: { history: HistoryBar[];
   return (
     <section className="panel chart" aria-label="Storm chart">
       <div className="chart-head">
-        <span className="caps">The storm · rebased to 100</span>
+        <div>
+          <div className="caps">The storm · rebased to 100</div>
+          <h2 className="serif chart-title">Franc vs euro</h2>
+        </div>
         <span className="legend">
           <span><i style={{ background: C.flareSoft }} />S franc {last ? last.S.toFixed(1) : "–"}</span>
           <span><i style={{ background: C.ice }} />F euro {last ? last.F.toFixed(1) : "–"}</span>
         </span>
       </div>
-      <svg viewBox={`-30 0 ${W + 34} 272`} className="chart-svg" role="img" aria-label="Franc and euro prices with their rolling correlation">
+      <svg viewBox={`-30 0 ${W + 34} ${H}`} className="chart-svg" role="img" aria-label="Franc and euro prices with their rolling correlation">
         <defs>
           <filter id="cTrail" x="-10%" y="-60%" width="120%" height="220%"><feGaussianBlur stdDeviation="3" /></filter>
         </defs>
         {geo.ticks.map((v) => (
           <g key={v}>
             <line x1="0" x2={W} y1={geo.y(v)} y2={geo.y(v)} stroke="rgba(201,195,255,0.08)" />
-            <text x="-6" y={geo.y(v) + 3} textAnchor="end" className="t-mono" fontSize="9" fill="rgba(201,195,255,0.55)">{v}</text>
+            <text x="-6" y={geo.y(v) + 3} textAnchor="end" className="t-mono" fontSize="10" fill="rgba(201,195,255,0.6)">{v}</text>
           </g>
         ))}
         {geo.shockX !== null && (
           <g>
             <line x1={geo.shockX} x2={geo.shockX} y1={TOP - 6} y2={RHO_TOP + RHO_H} stroke={C.flareSoft} strokeDasharray="2 3" opacity="0.75" />
-            <text x={geo.shockX + 5} y={TOP + 4} className="t-serif" fontSize="12" fill="#ffd3dc">the cap breaks</text>
-            <text x={geo.shockX + 5} y={TOP + 16} className="t-mono" fontSize="8" fill="rgba(255,211,220,0.7)">15 JAN · 09:30</text>
+            <text x={geo.shockX + 6} y={TOP + 4} className="t-serif" fontSize="15" fill="#ffd3dc">the cap breaks</text>
+            <text x={geo.shockX + 6} y={TOP + 19} className="t-mono" fontSize="9" fill="rgba(255,211,220,0.7)">15 JAN · 09:30</text>
           </g>
         )}
         <path d={line("F")} fill="none" stroke={C.ice} strokeWidth="4" opacity="0.3" filter="url(#cTrail)" />
         <path d={line("S")} fill="none" stroke="#ff8fa6" strokeWidth="5" opacity="0.4" filter="url(#cTrail)" />
-        <path d={line("F")} fill="none" stroke={C.ice} strokeWidth="1.2" strokeLinejoin="round" />
-        <path d={line("S")} fill="none" stroke="#ffd3dc" strokeWidth="1.4" strokeLinejoin="round" />
+        <path d={line("F")} fill="none" stroke={C.ice} strokeWidth="1.5" strokeLinejoin="round" />
+        <path d={line("S")} fill="none" stroke="#ffd3dc" strokeWidth="1.8" strokeLinejoin="round" />
 
         <rect x="0" y={RHO_TOP} width={W} height={RHO_H} rx="6" fill="rgba(0,0,0,0.2)" />
         <line x1="0" x2={W} y1={geo.yr(0)} y2={geo.yr(0)} stroke="rgba(201,195,255,0.15)" strokeDasharray="1 4" />
@@ -72,17 +75,18 @@ export function StormChart({ history, bar, shockTime }: { history: HistoryBar[];
         <text x="-6" y={geo.yr(0) + 3} textAnchor="end" className="t-mono" fontSize="8" fill="rgba(201,195,255,0.5)">0</text>
         <text x="-6" y={geo.yr(-1)} textAnchor="end" className="t-mono" fontSize="8" fill="rgba(201,195,255,0.5)">−1</text>
         <path d={rhoLine} fill="none" stroke={C.ice} strokeWidth="1.3" opacity="0.9" />
-        <text x="4" y={RHO_TOP + 11} className="t-caps" fontSize="7" fill="rgba(168,236,255,0.65)">CORRELATION ρ</text>
+        <text x="6" y={RHO_TOP + 13} className="t-caps" fontSize="8" fill="rgba(168,236,255,0.65)">CORRELATION ρ</text>
 
         {last && (
           <g>
             <line x1={px} x2={px} y1={TOP - 6} y2={RHO_TOP + RHO_H} stroke="rgba(255,255,255,0.45)" />
-            <circle cx={px} cy={geo.y(last.S)} r="3" fill="#ffffff" />
+            <circle cx={px} cy={geo.y(last.S)} r="9" fill="#ff8fa6" opacity="0.35" filter="url(#cTrail)" />
+            <circle cx={px} cy={geo.y(last.S)} r="3.5" fill="#ffffff" />
             <circle cx={px} cy={geo.y(last.F)} r="2.4" fill={C.ice} />
           </g>
         )}
         {geo.days.filter((_, k) => k % 2 === 0).map((b) => (
-          <text key={b.i} x={geo.x(b.i)} y="268" textAnchor="middle" className="t-mono" fontSize="8" fill="rgba(201,195,255,0.5)">
+          <text key={b.i} x={geo.x(b.i)} y={H - 4} textAnchor="middle" className="t-mono" fontSize="9" fill="rgba(201,195,255,0.55)">
             {new Date(b.time).getUTCDate()} Jan
           </text>
         ))}
