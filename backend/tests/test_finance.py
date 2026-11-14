@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from backend.config import SCORE_WINDOW
 from backend.contracts import Bar
 from backend.finance import Effectiveness, Hedger
 
@@ -34,7 +35,7 @@ def run_engine(rS: np.ndarray, rF: np.ndarray, half_life: float) -> tuple[np.nda
     return rH, h_after, E
 
 
-def reference_run(rS: np.ndarray, rF: np.ndarray, H: float, W: int = 96) -> np.ndarray:
+def reference_run(rS: np.ndarray, rF: np.ndarray, H: float, W: int = SCORE_WINDOW) -> np.ndarray:
     """Verbatim copy of the reference implementation in SPEC.md §6.4."""
     lam = 0.5 ** (1 / H)
     cov = var = 0.0

@@ -23,6 +23,7 @@ PAIRS = ("eurchf", "eurgbp", "gbpchf")
 DATA_START = pd.Timestamp("2015-01-02T00:00Z")  # 1 January is a market holiday (thin, flat filler)
 DATA_END = pd.Timestamp("2015-01-24T00:00Z")  # the end of the replay week
 MARKET_OPEN_HOUR = 22  # FX trades Sunday 22:00 UTC to Friday 22:00 UTC (§5.3)
+OPEN_HOURS = 22 + 3 * 120  # Friday 2 January until 22:00, then three full 120-hour trading weeks
 
 
 def find_raw_file(raw_dir: Path, pair: str) -> Path:
@@ -77,7 +78,8 @@ def check(out: pd.DataFrame) -> None:
     shock_bar = shock.floor(f"{BAR_MINUTES}min")
 
     print(f"rows: {len(out)} ({times[0]} to {times[-1]})")
-    assert 1400 <= len(out) <= 1700, "row count outside 1,400–1,700"
+    expected = OPEN_HOURS * 60 // BAR_MINUTES
+    assert abs(len(out) - expected) <= 0.02 * expected, f"row count {len(out)} isn't close to {expected}"
     assert times[0].date().isoformat() == "2015-01-02", "first row isn't on 2 January"
     assert (times <= replay_start).any(), "no row on or before REPLAY_START"
     assert (times >= last_replay_bar).any(), "no bar covering the end of the replay"
@@ -96,7 +98,8 @@ def check(out: pd.DataFrame) -> None:
     print("largest five |rS|:")
     for t, v in biggest.items():
         print(f"  {t}  {v:.4f}")
-    assert all(t.normalize() == shock.normalize() for t in biggest.index), "a top-five |rS| isn't on 15 January"
+    # The top three must be on the shock day. With 2-hour bars the 16 January aftermath can reach the top five.
+    assert all(t.normalize() == shock.normalize() for t in biggest.index[:3]), "a top-three |rS| isn't on 15 January"
 
 
 def write(out: pd.DataFrame, path: Path) -> None:

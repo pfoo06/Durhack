@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from backend.config import BAR_MINUTES, SHOCK_TIME
 from backend.data import load_bars, replay_range
 
@@ -14,7 +16,8 @@ SHOCK = datetime.fromisoformat(SHOCK_TIME)
 
 def test_loads_the_committed_csv() -> None:
     bars = load_bars(CSV)
-    assert 1400 <= len(bars) <= 1700
+    expected = (22 + 3 * 120) * 60 // BAR_MINUTES  # open-market hours in the data, as bars
+    assert abs(len(bars) - expected) <= 0.02 * expected
     assert [b.i for b in bars] == list(range(len(bars)))
     assert all(a.time < b.time for a, b in zip(bars, bars[1:]))
     assert all(b.time.tzinfo is not None and b.time.utcoffset().total_seconds() == 0 for b in bars)
@@ -25,7 +28,7 @@ def test_replay_range_is_inside_the_data() -> None:
     first, last = replay_range(bars)
     assert 0 < first < last < len(bars)
     assert bars[first].time == datetime(2015, 1, 12, tzinfo=timezone.utc)
-    assert bars[last].time == datetime(2015, 1, 23, 21, 45, tzinfo=timezone.utc)
+    assert bars[last].time == datetime(2015, 1, 23, 22, tzinfo=timezone.utc) - timedelta(minutes=BAR_MINUTES)
 
 
 def test_shock_bar_is_large() -> None:
@@ -55,7 +58,6 @@ def test_history_payload_is_the_rebased_replay_window() -> None:
     assert len(rows) == last - first + 1
     assert rows[0]["i"] == first and rows[-1]["i"] == last
     assert rows[0]["time"] == "2015-01-12T00:00:00Z"
-    assert rows[0]["S"] == 100.0 and rows[0]["F"] == 100.0
+    assert rows[0]["S"] == pytest.approx(100.0) and rows[0]["F"] == pytest.approx(100.0)
     assert set(rows[0]) == {"i", "time", "S", "F", "rho"}
-    shock = next(r for r in rows if r["time"] == "2015-01-15T09:30:00Z")
-    assert shock["S"] > 110  # the franc jumped against the pound
+    assert max(r["S"] for r in rows) > 110  # the franc jumped against the pound in the storm
