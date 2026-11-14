@@ -98,9 +98,9 @@ def test_smoke_melody(bars):
 
 def test_modem_switch_is_open_to_macs(bars):
     mac = app.Mac(bars, 1)
-    assert mac.state_message()["modem"] == "pilot"
-    assert mac.handle({"type": "modem", "mode": "melody"}) is None and mac.state_message()["modem"] == "melody"
-    assert mac.handle({"type": "modem", "mode": "pilot"}) is None and mac.modem == "pilot"
+    assert mac.state_message()["modem"] == "melody"  # the quiet melody is the default (C.DEFAULT_MODEM)
+    assert mac.handle({"type": "modem", "mode": "pilot"}) is None and mac.state_message()["modem"] == "pilot"
+    assert mac.handle({"type": "modem", "mode": "melody"}) is None and mac.modem == "melody"
     assert mac.handle({"type": "modem", "mode": "x"}) is not None
 
 

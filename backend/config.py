@@ -20,6 +20,7 @@ EXPLORE_STEP = 0.3  # size of that try; under STEP_HYSTERESIS (0.6), so it doesn
 EXPLORE_BELOW = 0.8  # only explore while own score is under this, so the calm harmony is untouched
 BLACKLIST_S = 10.0
 LOST_AFTER_S = 10.0
+DEFAULT_MODEM = "melody"  # what a Mac sends unless told otherwise: the quiet melody, not the high pilot tones
 CLOCK_EVERY = 3  # late join (#35): every 3rd packet a running Mac sends is its replay position (a clock packet)
 RESYNC_BARS = 2  # a Mac re-syncs only when it is more than this many bars away from the room
 SAMPLE_RATE = 48000

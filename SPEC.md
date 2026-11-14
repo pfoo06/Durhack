@@ -945,7 +945,7 @@ In loopback (`LoopbackRoom`, 0 dB SNR, 1 bar/s): Start pressed before the other 
 - **Use:** for each peer heard on pilots, show "✓ heard" in the UI if that peer's chord template scores ≥ 0.6.
 - **Never used for decisions (D4).**
 
-### 9.6 Melody modem (`audio/melody.py`; optional, UI toggle, default off)
+### 9.6 Melody modem (`audio/melody.py`; the default since the pilots proved too harsh in the room; UI toggle back to pilots)
 The pilot tones (§9.1) are audible to many people. The melody modem sends the same 40-bit packet (§9.2) as 11 plucked notes of the A-major scale instead.
 - **Digits.** The 10 nibbles, read as one 40-bit number, are written in base 14 (14¹¹ > 2⁴⁰): 11 digits, one note each. Nibble 1 (reserved, 0 in pilots) carries the sender's channel. The CRC-8 is unchanged. Only adviser packets are sent.
 - **Notes.** 14 notes, B6 (1976 Hz) up to B8 (7902 Hz), A major, **without C♯8**: that note sits on a count-in click partial (§9.4). Everything is above the chords (stop at 1.8 kHz) and under 8 kHz. A note is a sine with a 4 ms attack and a 35 ms decay, 80 ms sounding in a 100 ms slot. Played at `MELODY_GAIN_DB` (−12), 6 dB above the pilots.
@@ -1284,7 +1284,7 @@ Written by the P2 agents' PRs (#7 clock, #8 synth, #10 modem). They record where
 - **Not tested on hardware:** real speaker and mic response at 2–6 kHz, hall noise, `DETECT_LAG_S`, and the real Mac-to-Mac start offset; whether the deaf window (`COUNT_IN_DEAF_S`) covers the room echo of a Mac's own clicks (loopback shows 1 bar at 20 Hz loop granularity).
 
 ### Melody modem (`audio/melody.py`; branch `feat/melody-modem`)
-- Why: the pilots (14–19 kHz at −18 dB) were jarring in the room. Design and wire format are in §9.6. It is a per-Mac switch, off by default, so the demo can fall back to pilots.
+- Why: the pilots (14–19 kHz at −18 dB) were jarring in the room. Design and wire format are in §9.6. It is a per-Mac switch, **on by default** (`DEFAULT_MODEM = "melody"`), so the demo can still fall back to pilots. Every Mac always decodes both.
 - In loopback: 0 dB SNR → 21 packets each way over a full replay (pilots: 64) with 2–3 bad CRCs (pilots: ~30). 30 packets through noise sized for a 0 dB pilot, at +6 dB signal: ≥ 28 decoded.
 - Cost: a Mac is heard every 5.6 s instead of every 1.5 s. The loopback adviser still converges; not measured with four Macs.
 - Turns need all Macs to start from the same count-in. At −3 dB the follower's count-in detection (3 dB margin, above) is the weak link, and a late Mac collides with the others' turns.

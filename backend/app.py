@@ -122,7 +122,7 @@ class Mac:
     """One Mac's brain: clock → adviser → synth, packets in and out, UI messages (SPEC §4.7)."""
 
     def __init__(self, bars: list[Bar], channel: int, dial: float | None = None,
-                 adviser_cls: type = Adviser, modem_mode: str = "pilot") -> None:
+                 adviser_cls: type = Adviser, modem_mode: str = C.DEFAULT_MODEM) -> None:
         self.bars, self.channel = bars, channel
         self.modem = modem_mode  # MELODY: what we send, 'pilot' or 'melody'; UI-switchable
         self.slot_t0: float | None = None  # MELODY: when the replay began (count-in), the shared time base for turns
@@ -261,7 +261,7 @@ class LoopbackRoom:
     """Two Macs in one process (channels 0 and 1) joined through VirtualAir. Either can press Start."""
 
     def __init__(self, bars: list[Bar], snr_db: float, chord_gain_db: float, pilot_gain_db: float,
-                 modem_mode: str = "pilot") -> None:
+                 modem_mode: str = C.DEFAULT_MODEM) -> None:
         from backend.mocks import VirtualAir
         self.macs = [Mac(bars, 0, modem_mode=modem_mode), Mac(bars, 1, modem_mode=modem_mode)]
         self.decoders = [Ears(m.channel) for m in self.macs]
@@ -305,7 +305,7 @@ class LoopbackRoom:
 
 
 def run_smoke(bars: list[Bar], snr_db: float = 0.0, chord_gain_db: float = C.CHORD_GAIN_DB,
-              pilot_gain_db: float = C.PILOT_GAIN_DB, modem_mode: str = "pilot") -> bool:
+              pilot_gain_db: float = C.PILOT_GAIN_DB, modem_mode: str = C.DEFAULT_MODEM) -> bool:
     """--loopback --smoke: count-in, then replay at the default speed until ≥200 bars and ≥3 packets decoded by each
     Mac (virtual time). The other Mac must have started within 1 bar of the starter."""
     room = LoopbackRoom(bars, snr_db, chord_gain_db, pilot_gain_db, modem_mode)
@@ -425,7 +425,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--loopback", action="store_true")
     p.add_argument("--snr-db", type=float, default=0.0)
     p.add_argument("--smoke", action="store_true")
-    p.add_argument("--modem", choices=("pilot", "melody"), default="pilot", help="what to send first; switchable in the UI")
+    p.add_argument("--modem", choices=("pilot", "melody"), default=C.DEFAULT_MODEM,
+                   help="what to send first (default: the quiet melody; 'pilot' = high tones); switchable in the UI")
     p.add_argument("--chord-gain-db", type=float, default=C.CHORD_GAIN_DB)
     p.add_argument("--pilot-gain-db", type=float, default=C.PILOT_GAIN_DB)
     p.add_argument("--input-device")
