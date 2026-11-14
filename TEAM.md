@@ -6,7 +6,7 @@ Who does what, and how to get up to speed fast. The full detail is in [SPEC.md](
 
 | Person | Role | Lanes (SPEC §12.2) | Status |
 | --- | --- | --- | --- |
-| **Erinna** | P1 finance and data | P1-A data prep, P1-B finance core (PR #13), P1-C `PnL` and `history_payload` | Finance in review. Data and `PnL` still to do. |
+| **Erinna** | P1 finance and data | P1-A data prep, P1-B finance core (PR #13), P1-C `PnL` and `history_payload` | Finance core merged (#13). Data in review. `PnL` still to do. |
 | **Peter** | P2 audio and music | Modem, engine, synth, clock | Done and merged. |
 | **Xin Jie** | P4 frontend | P4-A: the UI, built against the mock WebSocket | Not started on `main`. |
 | **Keya** | P3 strategy | P3-A `Adviser`, P3-B strategy sweep, P3-C `VirtualRoom` and `sim.py` | Free. Nothing started. |
