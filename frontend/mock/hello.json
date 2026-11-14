@@ -1,0 +1,27 @@
+{
+  "type": "hello",
+  "channel": 1,
+  "conductor": true,
+  "replayStart": "2015-01-12T00:00:00Z",
+  "replayEnd": "2015-01-23T21:45:00Z",
+  "shockTime": "2015-01-15T09:30:00Z",
+  "speeds": [
+    0,
+    1,
+    2,
+    4,
+    8,
+    16,
+    32,
+    64
+  ],
+  "chords": [
+    "A",
+    "Bm",
+    "C♯m",
+    "D",
+    "E",
+    "F♯m",
+    "G♯dim"
+  ]
+}
