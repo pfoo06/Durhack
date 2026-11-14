@@ -55,9 +55,41 @@ def test_starts_on_heard_count_in(bars):
     assert mac.bar - mac.first + 1 == DEFAULT_BARS and not mac.paused and mac.state_message()["clock"] == "free"
 
 
-def test_only_adviser_packets_are_sent(bars):
+def test_only_adviser_packets_are_sent_while_paused(bars):
     mac = app.Mac(bars, 2)
-    assert all(type(mac.next_packet()).__name__ == "AdviserPacket" for _ in range(3))
+    assert all(type(mac.next_packet()).__name__ == "AdviserPacket" for _ in range(3 * C.CLOCK_EVERY))
+
+
+def test_running_mac_announces_its_position(bars):
+    mac = app.Mac(bars, 2)
+    mac.on_count_in()
+    mac.step(0.05, 0.0)
+    mac.step(1.0, 0.05)
+    kinds = [type(mac.next_packet()).__name__ for _ in range(2 * C.CLOCK_EVERY)]
+    assert kinds.count("ClockPacket") == 2 and kinds[C.CLOCK_EVERY - 1] == "ClockPacket"
+
+
+def test_late_joiner_catches_up(bars):
+    """Start pressed before the other Mac's detector has learned the noise floor: it misses the count-in, then
+    joins from the position packets (late join, #35)."""
+    room = app.LoopbackRoom(bars, 0.0, app.C.CHORD_GAIN_DB, app.C.PILOT_GAIN_DB)
+    room.macs[0].handle({"type": "control", "action": "start"})
+    dt = 1 / app.C.LOOP_HZ
+    while room.t < 20:
+        room.step(dt)
+    m0, m1 = room.macs
+    assert m1.bar > m1.first and not m1.paused
+    assert abs(m0.bar - m1.bar) <= C.RESYNC_BARS
+
+
+def test_paused_mac_stays_held(bars):
+    room = app.LoopbackRoom(bars, 0.0, app.C.CHORD_GAIN_DB, app.C.PILOT_GAIN_DB)
+    dt = 1 / app.C.LOOP_HZ
+    room.macs[1].handle({"type": "control", "action": "pause"})
+    room.macs[0].handle({"type": "control", "action": "start"})
+    while room.t < 20:
+        room.step(dt)
+    assert room.macs[1].paused and room.macs[1].bar == room.macs[1].first - 1
 
 
 def test_smoke_melody(bars):

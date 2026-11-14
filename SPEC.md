@@ -112,7 +112,7 @@ Each line is settled. To change one, raise it with the whole team. Don't change 
 | D6 | **Every adviser runs identical maths. Only the dial differs.** | Score differences then come from strategy alone |
 | D7 | **Score = rolling hedge effectiveness over a fixed window (`SCORE_WINDOW`, 24 two-hour bars), the same for everyone** | It's a standard measure, and comparable across advisers |
 | D8 | **MVP convergence = step a fixed fraction (`STEP_FRACTION`, 50%) towards the leader once its lead is confirmed on a fresh packet, with trial and revert** | Simple and easy to hear. The confirmation stops stale pre-shock packets pulling advisers off the best strategy (§7.3 step 5b). Particle swarm optimisation comes after the MVP. |
-| D9 | **Any Mac starts everyone with a 4-beat audible count-in (clicks at 2–6 kHz). After beat 4 every Mac free-runs on its own clock; no clock packets are sent.** | Starts the room together without a network, and without a constant whine. A Mac's clock drifts only tens of ppm, far under one bar over the replay. |
+| D9 | **Any Mac starts everyone with a 4-beat audible count-in (clicks at 2–6 kHz). After beat 4 every Mac free-runs on its own clock, and running Macs also announce their position so a Mac that missed the count-in joins and a drifting one re-syncs (§9.4a).** | Starts the room together without a network, and without a constant whine. A Mac's clock drifts only tens of ppm; the position packets cover missed count-ins, double Starts and pauses. |
 | D10 | **Everything stays in A major** (one chord per dial step) | Moving between strategies still sounds musical |
 | D11 | **The position is a CHF payable** (the company owes francs), hedged by holding EUR | The franc's jump is a loss, which makes a clear storm story |
 | D12 | **Trial and revert compares the score *gap* to the leader, not the raw score** (§7.4) | The market moves all scores together, so a raw-score check would revert good moves during the storm |
@@ -283,7 +283,9 @@ class Heard:                  # one successfully decoded packet
 | `EXPLORE_BELOW` | 0.8 | P3 | Only explore while own score is under this, so the calm harmony is untouched |
 | `REVERT_MARGIN` | 0.05 | P3 | How much the gap may worsen before we revert |
 | `BLACKLIST_S` | 10.0 | P3 | Ignore a leader for this long after reverting a move towards it |
-| `LOST_AFTER_S` | 10.0 | P3 | Forget an adviser after this long without a packet |
+| `LOST_AFTER_S` | 10.0 | P3 | Forget an adviser after this long without a packet (also how long a heard position counts, §9.4a) |
+| `CLOCK_EVERY` | 3 | P2 | Every 3rd packet a running Mac sends is its position (a clock packet, §9.4a) |
+| `RESYNC_BARS` | 2 | P2 | A Mac re-syncs only when more than this many bars from the room |
 | `SAMPLE_RATE` | 48000 | P2 | Audio sample rate, input and output |
 | `BLOCK` | 480 | P2 | Audio callback size (10 ms) |
 | `FFT_N` | 2048 | P2 | Decoder analysis window (42.7 ms, bin = 23.4375 Hz) |
@@ -926,6 +928,16 @@ return Tick(bars[position : position + n], reset=<pending reset flag, cleared>)
 | Start to shock | about 326 | about 41 s |
 
 Higher speeds (5–7) are for skipping through calm periods. Convergence is tuned for speed 4. At speed 7 information goes stale before it's used, so expect less convergence.
+
+### 9.4a Late join and re-sync (#35)
+The count-in is the only thing that lines Macs up at the start, so a Mac that misses it, or is started twice, or paused, stays out of step for the whole replay. To fix that without a conductor:
+- **Announce.** While its replay is running, every `CLOCK_EVERY`-th packet a Mac sends is a **clock packet** (type 1, §9.2): its position (the next bar it will play, 12 bits) and speed step. The other packets stay adviser packets. Both modems carry it (the melody decoder accepts types 0 and 1).
+- **Estimate.** A heard position is aged: `bar + speed × (now − received_at + 1.6 s)`, because the position was stamped when the packet started. The room position is the **median** of the estimates heard in the last `LOST_AFTER_S`, advanced at our own speed since.
+- **Join.** A Mac that is paused (never started, or Reset) and hears a position **joins**: it adopts that speed, starts running, and catches up through every bar in order (the adviser still processes every bar, up to `MAX_CATCHUP_BARS` per tick). With the melody modem it also lines its turn clock up with the room.
+- **Re-sync.** A running Mac more than `RESYNC_BARS` **behind** the room catches up at once. One more than `RESYNC_BARS` **ahead** holds (plays no bars) until the room is within reach, because bars are never un-processed. Inside ±`RESYNC_BARS` it free-runs.
+- **Exceptions.** Heard positions are ignored while a Mac is counting in, and while it is **held**: Pause on a Mac's own page holds it, so it doesn't rejoin the room until Start or Reset. Start on a running room's Mac restarts that Mac's replay, and the room then pulls it back to the room's position.
+
+In loopback (`LoopbackRoom`, 0 dB SNR, 1 bar/s): Start pressed before the other Mac could hear the count-in used to leave it at the first bar for the whole replay (119 bars behind at the end). Now it joins within a few seconds and stays within 1 bar. Start pressed on both Macs 10 s apart used to leave them 11 bars apart; now within 1.
 
 ### 9.5 Chord analysis (stretch goal, after +12h: "it really is listening")
 - Every 0.5 s, take an 8,192-point FFT (5.9 Hz bins) of the mic input, keep 100–2,000 Hz, and fold the energy into 12 pitch classes.
