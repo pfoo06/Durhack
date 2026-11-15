@@ -497,7 +497,7 @@ For the demo only. On the real data, every strategy scores about 0 for four trad
 - euro: `rF ~ N(0, vol)`, with `vol = DEMO_VOL0·e^(−k / DEMO_VOL_TAU_BARS) + DEMO_VOL_MIN`;
 - franc: `rS = β·rF + N(0, DEMO_NOISE·vol)`, where β alternates between `DEMO_BETA ± DEMO_BETA_SWING` every half `DEMO_BETA_PERIOD_BARS`. The fast-memory strategy re-learns each shift within a bar or two and the slower ones lag, so the fast one stays ahead until everyone follows it.
 
-Times and indexes are the real ones, and the generator is seeded (`DEMO_SEED`), so every Mac builds identical bars. `hello.simulated` is true, and the page says "demo storm: simulated aftermath". Every Mac in a room must use the same `--storm`.
+Times and indexes are the real ones, and the generator is seeded (`DEMO_SEED`), so every Mac builds identical bars. `hello.simulated` is true; the page looks the same as with real data, so the presenter says the aftermath is simulated. Every Mac in a room must use the same `--storm`.
 
 Tuned results (`--storm demo`, real calm and crash):
 - **Split:** mean score from shock + 25 to shock + 36, for dials 0/3/4/5, is 0.87 / 0.50 / 0.33 / 0.21.

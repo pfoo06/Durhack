@@ -168,4 +168,3 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--moon); outl
 .mac-id { display: flex; align-items: baseline; gap: 10px; font-family: var(--serif, serif); font-size: 30px; color: var(--mac); margin-bottom: 4px; }
 .mac-id i { width: 14px; height: 14px; border-radius: 50%; background: var(--mac); box-shadow: 0 0 16px var(--mac); align-self: center; }
 .mac-mem { font-family: var(--sans); font-size: 13px; letter-spacing: 0.08em; color: var(--dim); }
-.sim-tag { color: var(--flare-soft, #ffb3c2); }
