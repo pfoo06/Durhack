@@ -40,3 +40,21 @@ def test_smooth_step_change() -> None:
     x = np.concatenate([first] + [s.render(480).copy() for _ in range(40)])
     assert np.abs(np.diff(x)).max() < 0.1
     assert not np.allclose(x[:480], x[-480:], atol=0.05)  # chord really changed
+
+
+def test_set_playing_fades_out_and_in_without_clicks() -> None:
+    import numpy as np
+    from backend.audio.synth import FADE_S, Synth
+    from backend.config import BLOCK, SAMPLE_RATE
+    s = Synth(seed=0)
+    s.set(2, 1.0)
+    for _ in range(10):
+        s.render(BLOCK)
+    s.set_playing(False)
+    blocks = int(FADE_S * SAMPLE_RATE / BLOCK) + 2
+    out = np.concatenate([s.render(BLOCK).copy() for _ in range(blocks)])
+    assert np.max(np.abs(np.diff(out))) < 0.1  # no click while fading
+    assert np.max(np.abs(s.render(BLOCK))) == 0.0  # silent once faded
+    s.set_playing(True)
+    out = np.concatenate([s.render(BLOCK).copy() for _ in range(blocks)])
+    assert np.max(np.abs(np.diff(out))) < 0.1 and np.max(np.abs(out[-BLOCK:])) > 0.05

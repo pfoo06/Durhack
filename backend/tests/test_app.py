@@ -253,3 +253,30 @@ def test_melody_peers_never_look_lost(bars):
         room.step(dt)
         empty += sum(1 for m in room.macs if not m.state_message()["peers"])
     assert empty == 0
+
+
+def test_chord_is_silent_until_the_replay_runs(bars):
+    import numpy as np
+    mac = app.Mac(bars, 0)
+    for k in range(20):
+        mac.step(0.05, k * 0.05)
+    assert np.max(np.abs(mac.synth.render(C.BLOCK))) == 0.0  # app open, not started: silent
+    mac.on_count_in()
+    t = 1.0
+    for _ in range(60):
+        mac.step(0.05, t)
+        t += 0.05
+        mac.synth.render(C.BLOCK)
+    assert np.max(np.abs(mac.synth.render(C.BLOCK))) > 0.05  # running: the chord plays
+
+
+def test_finished_mac_stays_finished_and_stops_announcing(bars):
+    mac = app.Mac(bars, 0)
+    mac.on_count_in()
+    mac.step(0.05, 0.0)
+    mac.step(500.0, 0.05)  # far past the end of the replay
+    assert mac.bar == mac.last
+    assert all(type(mac.next_packet()).__name__ == "AdviserPacket" for _ in range(2 * C.CLOCK_EVERY))
+    mac.on_count_in()  # a false count-in from room noise
+    mac.step(0.05, 500.1)
+    assert mac.bar == mac.last

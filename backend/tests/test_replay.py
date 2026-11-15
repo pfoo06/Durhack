@@ -151,3 +151,14 @@ def test_no_join_while_counting_in() -> None:
     c = Clock(make_bars())
     c.start()
     assert not c.on_heard_bar(0, 40, config.DEFAULT_SPEED_STEP, 0.0)
+
+
+def test_finished_clock_ignores_count_ins_until_reset() -> None:
+    c = counted_in(Clock(make_bars()))
+    c.tick(COUNT_S + 0.01)
+    while c.tick(1.0).bars:  # play to the end
+        pass
+    assert not c.on_count_in(0.0)  # a stray count-in (room noise) mustn't restart a finished replay
+    assert c.tick(1.0).bars == []
+    c.reset()
+    assert c.on_count_in(0.0)  # after Reset it takes a count-in again

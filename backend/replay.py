@@ -67,8 +67,8 @@ class Clock:
     def on_count_in(self, lag: float = 0.0) -> bool:
         """Heard beat 4 `lag` seconds ago: start now, already `lag` seconds in. False if ignored: our own echo, or we
         are mid-run (a stray noise must not restart a running replay; Reset or Pause this Mac to take a new count-in)."""
-        if self._deaf > 0 or (not self._paused and self._pos <= self._last):
-            return False
+        if self._deaf > 0 or (not self._paused and self._pos <= self._last) or self._pos > self._last:
+            return False  # our echo; mid-run; or finished: a finished Mac waits for its own Reset or Start
         self.reset()
         self._step, self._paused = config.DEFAULT_SPEED_STEP, False
         self._acc = config.SPEED_BARS_PER_S[self._step] * lag
