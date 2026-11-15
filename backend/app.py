@@ -140,6 +140,7 @@ class Mac:
         self.clock = Clock(bars)
         self.synth = Synth()
         self.synth.set(self.state.step, self.state.score)
+        self.synth.set_playing(False)  # silent until the replay runs (Start, a heard count-in, or joining)
         self.paused = True
         self._last_decide = -1e9
         self._now = 0.0  # latest main-loop time, for the age of what we've heard
@@ -164,6 +165,7 @@ class Mac:
             self.state = self.adviser.on_bar(bar)
             self.bar = bar.i
         self.synth.set(self.state.step, self.state.score)
+        self.synth.set_playing(not self.paused and self.bar >= self.first)  # the final chord rings on at the end
         if now - self._last_decide >= C.DECISION_PERIOD_S:
             self.adviser.decide(now)
             self._last_decide = now
@@ -174,7 +176,7 @@ class Mac:
         """Adviser packets, plus every CLOCK_EVERY-th packet this Mac's replay position while it's running, so a Mac
         that missed the count-in can join and a drifting one can re-sync (§9.4a)."""
         self._sent += 1
-        running = not self.paused and self.bar >= self.first
+        running = not self.paused and self.first <= self.bar and self.clock.position <= self.last  # not once finished
         if not running or self._sent % C.CLOCK_EVERY:
             return self.adviser.packet()
         pkt = ClockPacket(self.channel, self._clock_seq, min(self.clock.position, 4095), self.clock.speed_step)

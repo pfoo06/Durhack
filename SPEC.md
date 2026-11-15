@@ -943,6 +943,8 @@ return Tick(bars[position : position + n], reset=<pending reset flag, cleared>)
 
 Higher speeds (5–7) are for skipping through calm periods. Convergence is tuned for speed 4. At speed 7 information goes stale before it's used, so expect less convergence.
 
+**Silence and the end.** A Mac's chord is silent until its replay runs (Start, a heard count-in, or joining) and while it is paused or reset; `Synth.set_playing` fades it in or out over `FADE_S`. At the end of the replay the final chord rings on, the Mac stays finished, it ignores count-ins (room noise must not restart it) and stops announcing its position until its own Reset or Start.
+
 ### 9.4a Late join and re-sync (#35)
 The count-in is the only thing that lines Macs up at the start, so a Mac that misses it, or is started twice, or paused, stays out of step for the whole replay. To fix that without a conductor:
 - **Announce.** While its replay is running, every `CLOCK_EVERY`-th packet a Mac sends is a **clock packet** (type 1, §9.2): its position (the next bar it will play, 12 bits) and speed step. The other packets stay adviser packets. Both modems carry it (the melody decoder accepts types 0 and 1).

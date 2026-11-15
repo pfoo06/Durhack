@@ -50,6 +50,9 @@ class Synth:
         self._rng = np.random.default_rng(seed)
         self._a = math.exp(-TWO_PI * NOISE_CUTOFF_HZ / SAMPLE_RATE)
         self._lp = [0.0] * NOISE_STAGES
+        self._playing = True  # set_playing(): the Mac keeps the chord silent until its replay runs
+        self._level = 1.0  # current output level, ramped towards 0 or 1 over FADE_S
+        self._rendered = False
         self._size = 0
         self._alloc(BLOCK)
         # normalise filtered noise to ~unit rms so the 0.15 gain means something
@@ -62,6 +65,13 @@ class Synth:
         self._step = step
         self._score = score
 
+    def set_playing(self, on: bool) -> None:
+        """Fade the chord in (True) or out (False) over FADE_S, so starting and stopping never click.
+        Before anything has been rendered it just starts at that level (no blip when the app opens)."""
+        self._playing = on
+        if not self._rendered:
+            self._level = 1.0 if on else 0.0
+
     def _alloc(self, n: int) -> None:
         self._size = n
         self._t = np.arange(1, n + 1, dtype=np.float64)
@@ -72,6 +82,7 @@ class Synth:
         self._old_buf = np.empty(n)
         self._w = np.empty(n)
         self._out = np.empty(n, dtype=np.float32)
+        self._g = np.empty(n)
 
     def _bank(self, phases: np.ndarray, hz: np.ndarray, detune: np.ndarray,
               gains: np.ndarray, out: np.ndarray, n: int) -> None:
@@ -103,6 +114,7 @@ class Synth:
         return out * self._noise_norm
 
     def render(self, n: int) -> np.ndarray:
+        self._rendered = True
         if n != self._size:
             self._alloc(n)
         target = min(max(int(self._step), 0), N_STEPS - 1)
@@ -140,6 +152,14 @@ class Synth:
                 self._fade_pos = 0
         if gn > 0.0:
             out += gn * scale * self._noise(n)
+        target_level = 1.0 if self._playing else 0.0
+        if self._level != target_level or target_level == 0.0:
+            reach = n / max(1, self._fade_n)  # a full fade takes FADE_S
+            end = self._level + max(-reach, min(reach, target_level - self._level))
+            np.multiply(self._t, (end - self._level) / n, out=self._g)  # a linear ramp, no allocation
+            self._g += self._level
+            out *= self._g
+            self._level = end
         np.clip(out, -1.0, 1.0, out=out)
         self._out[:] = out
         return self._out
