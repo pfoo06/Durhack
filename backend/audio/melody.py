@@ -37,10 +37,11 @@ def encode(packet: AdviserPacket | ClockPacket) -> np.ndarray:
     """float32 mono, peak 1.0, one plucked note per digit."""
     out = np.zeros(_NSYM * _SYM)
     t = np.arange(_TONE) / C.SAMPLE_RATE
-    attack = int(0.004 * C.SAMPLE_RATE)
-    env = np.exp(-t / (C.MELODY_DECAY_MS / 1000))
+    attack = C.MELODY_ATTACK_MS * C.SAMPLE_RATE // 1000
+    release = int(0.004 * C.SAMPLE_RATE)
+    env = np.exp(-np.maximum(t - attack / C.SAMPLE_RATE, 0) / (C.MELODY_DECAY_MS / 1000))  # decay starts after the attack
     env[:attack] *= 0.5 - 0.5 * np.cos(np.pi * np.arange(attack) / attack)
-    env[-attack:] *= np.linspace(1, 0, attack)
+    env[-release:] *= 0.5 + 0.5 * np.cos(np.pi * np.arange(release) / release)
     for j, d in enumerate(digits(packet)):
         out[j * _SYM : j * _SYM + _TONE] = env * np.sin(2 * np.pi * FREQS[d] * t)
     return (out / np.abs(out).max()).astype(np.float32)

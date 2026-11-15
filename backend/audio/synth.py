@@ -10,7 +10,11 @@ from backend.config import BLOCK, SAMPLE_RATE
 # Music constants from SPEC section 8 (not in config.py; spec gap noted in PR).
 A3_HZ = 220.0
 SCALE = (0, 2, 4, 5, 7, 9, 11)  # A major, semitones above A3
-HARMONICS = (1.0, 0.3, 0.15)
+HARMONICS = (1.0, 0.5, 0.3, 0.18, 0.1)  # warmer, sawtooth-ish tilt
+HARMONIC_TOP_HZ = 1900.0  # drop partials above this: 2-8 kHz belongs to the melody and count-in (countin.py)
+CHORUS_CENTS = 6.0  # a second, slightly sharp copy of the triad: slow beating, fuller body, still reads as in tune
+CHORUS_GAIN = 0.5
+SUB_GAIN = 0.6  # root an octave down
 DETUNE_CENTS = 30.0
 E_TAU_S = 0.2
 FADE_S = 0.15
@@ -18,7 +22,7 @@ NOISE_CUTOFF_HZ = 2000.0
 NOISE_STAGES = 6  # ponytail: spec says one pole; that leaves too much above 8 kHz, so cascade
 HEADROOM = 0.3  # fixed scale so peak <= 1.0 before the engine's chord gain
 N_STEPS = 7
-NVOICE = 5  # root, third, fifth, minor second, tritone
+NVOICE = 9  # root, third, fifth, minor second, tritone, sub root, chorus root/third/fifth
 TWO_PI = 2.0 * math.pi
 
 
@@ -28,7 +32,7 @@ def _degree_hz(d: int) -> float:
 
 def _chord_hz(step: int) -> np.ndarray:
     root, third, fifth = (_degree_hz(step + k) for k in (0, 2, 4))
-    return np.array([root, third, fifth, root * 2 ** (1 / 12), root * 2 ** (6 / 12)])
+    return np.array([root, third, fifth, root * 2 ** (1 / 12), root * 2 ** (6 / 12), root / 2, root, third, fifth])
 
 
 def _clamp01(x: float) -> float:
@@ -94,7 +98,7 @@ class Synth:
         for k, amp in enumerate(HARMONICS[1:], start=2):
             np.multiply(ph, k, out=b)
             np.sin(b, out=b)
-            b *= amp
+            b *= (amp * (k * hz * detune < HARMONIC_TOP_HZ))[:, None]
             a += b
         np.dot(gains, a, out=out)
         phases += inc * n
@@ -132,9 +136,11 @@ class Synth:
         g3 = _clamp01((0.4 - e) / 0.1) * 0.6
         gn = _clamp01((0.2 - e) / 0.1) * 0.15
         d = 2.0 ** (DETUNE_CENTS * (1.0 - e) / 1200.0)
-        detune = np.array([1.0, d, 1.0 / d, 1.0, 1.0])
-        scale = HEADROOM / math.sqrt(3.0 + g2 + g3 + gn)
-        gains = np.array([1.0, 1.0, 1.0, g2, g3]) * scale
+        c = 2.0 ** (CHORUS_CENTS / 1200.0)
+        detune = np.array([1.0, d, 1.0 / d, 1.0, 1.0, 1.0, c, d * c, c / d])
+        gains = np.array([1.0, 1.0, 1.0, g2, g3, SUB_GAIN, CHORUS_GAIN, CHORUS_GAIN, CHORUS_GAIN])
+        scale = HEADROOM / math.sqrt(gains.sum() + gn)
+        gains *= scale
 
         out = self._cur_buf
         self._bank(self._ph_cur, self._hz_cur, detune, gains, out, n)

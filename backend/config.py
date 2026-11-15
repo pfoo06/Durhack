@@ -54,6 +54,7 @@ PORT = 8000
 MELODY_NOTE_MS = 100  # one base-14 digit per note; 11 notes per packet
 MELODY_SOUND_MS = 80  # audible part of a note; the rest is silence
 MELODY_DECAY_MS = 35  # pluck decay time constant
+MELODY_ATTACK_MS = 12  # fade-in of each note: softer than a 4 ms pluck, still well inside the 80 ms note
 MELODY_SLOT_S = 1.4  # one Mac's turn: 11 notes (1.1 s) + guard
 MELODY_GAIN_DB = -12  # played like a chord, not like a hidden pilot
 MELODY_ALIGN_S = 0.1  # re-align our melody turns to the timing reference Mac's when more than this far off (§9.6)
