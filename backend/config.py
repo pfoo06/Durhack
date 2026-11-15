@@ -39,9 +39,9 @@ SPEED_BARS_PER_S = (0, 1, 2, 4, 8, 16, 32, 64)
 DEFAULT_SPEED_STEP = 1  # 1 bar/s: the 119-bar replay takes about 2 minutes
 COUNT_IN_CLICKS = 4
 COUNT_IN_INTERVAL_S = 0.5
-COUNT_IN_CLICK_MS = 30
+COUNT_IN_CLICK_MS = 60  # Hann burst: 30 ms rise (was 15), softer and ~3 dB easier to detect; 80 ms makes the beat-4 lag late
 COUNT_IN_BAND_HZ = (2000.0, 6000.0)
-COUNT_IN_GAIN_DB = -6
+COUNT_IN_GAIN_DB = -8  # was -6 at 30 ms; the longer click keeps the same detection margin. -12 is missed in loopback noise
 COUNT_IN_ONSET_DB = 6.0
 COUNT_IN_TOL_S = 0.08
 COUNT_IN_FLOOR_S = 1.0
@@ -54,9 +54,9 @@ PORT = 8000
 MELODY_NOTE_MS = 100  # one base-14 digit per note; 11 notes per packet
 MELODY_SOUND_MS = 80  # audible part of a note; the rest is silence
 MELODY_DECAY_MS = 35  # pluck decay time constant
-MELODY_ATTACK_MS = 12  # fade-in of each note: softer than a 4 ms pluck, still well inside the 80 ms note
+MELODY_ATTACK_MS = 20  # fade-in of each note: a soft mallet, not a beep; also more energy in the FFT's view than 12 ms (+1.5 dB margin)
 MELODY_SLOT_S = 1.4  # one Mac's turn: 11 notes (1.1 s) + guard
-MELODY_GAIN_DB = -12  # played like a chord, not like a hidden pilot
+MELODY_GAIN_DB = -12  # played like a chord, not like a hidden pilot. Noise tests sit ~3 dB below the cliff: -16 fails them
 MELODY_ALIGN_S = 0.1  # re-align our melody turns to the timing reference Mac's when more than this far off (§9.6)
 # Demo storm (--storm demo): the real calm and crash, then a SIMULATED aftermath in which the franc settles into a
 # new, stable relationship with the euro, so the strategies split clearly and then converge on a clean chord in time.

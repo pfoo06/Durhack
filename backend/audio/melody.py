@@ -21,6 +21,9 @@ _WIN = np.hanning(C.FFT_N).astype(np.float32)
 # A major, B6 up to B8, minus C#8 (4435 Hz sits on a count-in click partial, countin.py)
 _MIDI = np.array([95, 97, 98, 100, 102, 104, 105, 107, 110, 112, 114, 116, 117, 119])
 FREQS = 440.0 * 2.0 ** ((_MIDI - 69) / 12)  # 14 notes
+# Equal-loudness tilt: up to -3 dB near 3.5 kHz, where ears are most sensitive. Costs about as much margin as a 1 dB gain
+# cut (only the middle notes lose SNR), so it buys more softness per dB than MELODY_GAIN_DB; -5 dB fails the noise tests.
+_EAR = 10 ** (-3 * np.exp(-0.5 * (np.log2(FREQS / 3500) / 0.6) ** 2) / 20)
 _BINS = np.round(FREQS * C.FFT_N / C.SAMPLE_RATE).astype(int)[:, None] + np.array([-1, 0, 1])  # (14, 3)
 
 
@@ -38,12 +41,12 @@ def encode(packet: AdviserPacket | ClockPacket) -> np.ndarray:
     out = np.zeros(_NSYM * _SYM)
     t = np.arange(_TONE) / C.SAMPLE_RATE
     attack = C.MELODY_ATTACK_MS * C.SAMPLE_RATE // 1000
-    release = int(0.004 * C.SAMPLE_RATE)
+    release = int(0.015 * C.SAMPLE_RATE)  # soft cosine tail, no click at the note's end
     env = np.exp(-np.maximum(t - attack / C.SAMPLE_RATE, 0) / (C.MELODY_DECAY_MS / 1000))  # decay starts after the attack
     env[:attack] *= 0.5 - 0.5 * np.cos(np.pi * np.arange(attack) / attack)
     env[-release:] *= 0.5 + 0.5 * np.cos(np.pi * np.arange(release) / release)
     for j, d in enumerate(digits(packet)):
-        out[j * _SYM : j * _SYM + _TONE] = env * np.sin(2 * np.pi * FREQS[d] * t)
+        out[j * _SYM : j * _SYM + _TONE] = _EAR[d] * env * np.sin(2 * np.pi * FREQS[d] * t)
     return (out / np.abs(out).max()).astype(np.float32)
 
 
