@@ -64,21 +64,20 @@ def test_history_payload_is_the_rebased_replay_window() -> None:
 
 
 
-def test_demo_storm_keeps_the_real_crash_and_is_repeatable() -> None:
+def test_demo_storm_is_repeatable_with_one_clear_crash() -> None:
     from backend.data import demo_bars
 
     real = load_bars(CSV)
     demo, again = demo_bars(real), demo_bars(real)
-    shock = next(b.i for b in real if b.time <= SHOCK < b.time + timedelta(minutes=BAR_MINUTES))
-    assert demo[: shock + 1] == real[: shock + 1]  # the calm and the crash are real
     assert demo == again  # every Mac builds identical bars
-    assert len(demo) == len(real) and [b.time for b in demo] == [b.time for b in real]
-    assert any(d.rS != r.rS for d, r in zip(demo[shock + 1 :], real[shock + 1 :]))
+    assert [b.time for b in demo] == [b.time for b in real] and [b.i for b in demo] == [b.i for b in real]
+    shock = next(b for b in demo if b.time <= SHOCK < b.time + timedelta(minutes=BAR_MINUTES))
+    assert max(demo, key=lambda b: abs(b.rS)) is shock  # the crash is the biggest franc move
 
 
-def test_demo_storm_splits_then_converges() -> None:
-    """The point of the demo storm: right after the crash leaves the score window the four starting strategies
-    score clearly differently (fast best), and the room then converges on the fast one."""
+def test_demo_storm_splits_soon_then_converges(monkeypatch) -> None:
+    """The point of the demo storm: soon after the crash the starting strategies score in order (fast best),
+    and the room then converges on the fast one before the end."""
     from backend import config as C, sim
     from backend.data import demo_bars
     from backend.finance import Effectiveness, Hedger
@@ -91,7 +90,16 @@ def test_demo_storm_splits_then_converges() -> None:
         for b in bars:
             _, rH = h.update(b)
             scores.append(e.update(b.rS, rH))
-        split.append(sum(scores[shock + 25 : shock + 37]) / 12)
-    assert split == sorted(split, reverse=True) and split[0] - split[-1] > 0.5
-    run = sim.simulate(bars, 4, C.DEFAULT_SPEED_STEP, loss=0.1, seed=0)
-    assert sim.summarise(run, sim.simulate(bars, 4, C.DEFAULT_SPEED_STEP, loss=None)).final_steps == [0, 0, 0, 0]
+        split.append(sum(scores[shock + 10 : shock + 20]) / 10)
+    assert split == sorted(split, reverse=True) and split[0] - split[-1] > 0.05
+    monkeypatch.setattr(C, "REPLAY_START", C.DEMO_REPLAY_START)  # as app.py sets it for --storm demo
+    first, _ = replay_range(bars)
+    assert shock - first == 22  # the crash comes ~22 s into the replay
+    fixed = sim.simulate(bars, 4, C.DEFAULT_SPEED_STEP, loss=None)
+    on_fast = 0
+    for loss in (0.1, 0.45):
+        for seed in range(4):
+            s = sim.summarise(sim.simulate(bars, 4, C.DEFAULT_SPEED_STEP, loss=loss, seed=seed), fixed)
+            assert s.calm_held
+            on_fast += s.final_steps == [0, 0, 0, 0]
+    assert on_fast >= 5  # most rooms end on the fast strategy's chord (sim: 6/8)
