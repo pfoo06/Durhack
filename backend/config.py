@@ -1,7 +1,7 @@
 """Every tunable number lives here (SPEC 4.5). Audio/clock group owned by P2."""
 BAR_MINUTES = 120  # 2-hour bars: 15-minute bars fail the §6.4 sweep (SPEC §6.4 "Sweep result")
 REPLAY_START = "2015-01-12T00:00Z"
-REPLAY_END = "2015-01-23T22:00Z"
+REPLAY_END = "2015-01-22T10:00Z"  # start of the last replayed bar: just before the ECB announced QE (22 Jan, 13:30 CET), when the euro breaks away too
 SHOCK_TIME = "2015-01-15T09:30Z"
 RHO_WINDOW = 12  # 1 trading day of 2-hour bars
 H_MIN_BARS = 1  # step 0 = 2 h, step 6 = 128 h
