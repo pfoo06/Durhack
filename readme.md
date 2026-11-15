@@ -36,6 +36,7 @@ Every Mac runs the same command with a **different `--channel`**. The channel se
 - Two Macs: use channels 0 and 1. Three: 0, 1, 2.
 - Two Macs on the **same channel** would have the same strategy and talk over each other on the same band.
 - `--dial 2.5` overrides the starting strategy (0.0–6.0).
+- `--storm demo` keeps the real calm and crash but **simulates the aftermath**, tuned so the strategies split clearly and then all converge on the fast one inside the replay. Every Mac must use the same `--storm`. The page shows "demo storm: simulated aftermath".
 - Each Mac prints its channel, starting dial and half-life when audio starts. Open `http://localhost:8000` on each Mac to see its page. The page needs the built frontend first: `cd frontend && npm install && npm run build` (on laptops where Santa blocks esbuild, copy `frontend/dist` from a teammate).
 - Start the followers first, then the conductor, and press Start on the conductor's page. Followers lock to its clock.
 - `python -m backend.app --help` lists every option.

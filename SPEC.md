@@ -267,6 +267,7 @@ class Heard:                  # one successfully decoded packet
 | `REPLAY_START` | `2015-01-12T00:00Z` | P1 | First replayed bar. Everything before is warm-up. |
 | `REPLAY_END` | `2015-01-22T10:00Z` | P1 | Start of the last replayed bar (10:00–12:00), just before the ECB announced QE on 22 January and the euro broke away from the franc too |
 | `SHOCK_TIME` | `2015-01-15T09:30Z` | P1 | For UI markers and phase checks only. Never used in the finance maths. |
+| `DEMO_*` | see §5.5 | P1 | Demo storm only (`--storm demo`) |
 | `RHO_WINDOW` | 96 | P1 | Rolling correlation window for the chart |
 | `H_MIN_BARS` | 4 | P1 | Half-life at dial 0 |
 | `DIAL_MAX` | 6.0 | P1 | Dial range is 0 to `DIAL_MAX` |
@@ -490,6 +491,18 @@ Run it as `python scripts/prepare_data.py data/raw/ data/chf2015.csv`. It MUST:
 - Load it once at startup and treat it as read-only.
 
 ---
+
+### 5.5 Demo storm (`--storm demo`, `data.demo_bars`)
+For the demo only. On the real data, every strategy scores about 0 for four trading days after the crash and the best only recovers to about 0.6, so the split and convergence happen late and the ending stays tense. `--storm demo` keeps **the real bars up to and including the crash**, then replaces the aftermath with simulated returns:
+- euro: `rF ~ N(0, vol)`, with `vol = DEMO_VOL0·e^(−k / DEMO_VOL_TAU_BARS) + DEMO_VOL_MIN`;
+- franc: `rS = β·rF + N(0, DEMO_NOISE·vol)`, where β alternates between `DEMO_BETA ± DEMO_BETA_SWING` every half `DEMO_BETA_PERIOD_BARS`. The fast-memory strategy re-learns each shift within a bar or two and the slower ones lag, so the fast one stays ahead until everyone follows it.
+
+Times and indexes are the real ones, and the generator is seeded (`DEMO_SEED`), so every Mac builds identical bars. `hello.simulated` is true, and the page says "demo storm: simulated aftermath". Every Mac in a room must use the same `--storm`.
+
+Tuned results (`--storm demo`, real calm and crash):
+- **Split:** mean score from shock + 25 to shock + 36, for dials 0/3/4/5, is 0.87 / 0.50 / 0.33 / 0.21.
+- **Convergence:** all four end on step 0 in 8/8 simulated runs at 10% and 45% loss, with the fast strategy at about 0.92.
+- **Two-Mac `LoopbackRoom` (melody):** split at about 1:10 (0.77 vs 0.20), converged by about 1:40, both at about 0.92.
 
 ## 6. Finance engine
 

@@ -10,9 +10,9 @@ import type { Trails } from "../useStorm";
  */
 const W = 440, TOP = 16, PRICE_H = 200, RHO_TOP = 250, RHO_H = 64, SC_TOP = 334, SC_H = 90, H = 450;
 
-interface Props { history: HistoryBar[]; bar: number; shockTime: string; trails: Trails; channel: number }
+interface Props { history: HistoryBar[]; bar: number; shockTime: string; trails: Trails; channel: number; simulated?: boolean }
 
-export function StormChart({ history, bar, shockTime, trails, channel }: Props) {
+export function StormChart({ history, bar, shockTime, trails, channel, simulated = false }: Props) {
   const geo = useMemo(() => {
     if (history.length < 2) return null;
     const i0 = history[0].i, i1 = history[history.length - 1].i;
@@ -73,6 +73,7 @@ export function StormChart({ history, bar, shockTime, trails, channel }: Props) 
             <line x1={geo.shockX} x2={geo.shockX} y1={TOP - 6} y2={SC_TOP + SC_H} stroke={C.flareSoft} strokeDasharray="2 3" opacity="0.75" />
             <text x={geo.shockX + 6} y={TOP + 4} className="t-serif" fontSize="15" fill="#ffd3dc">the cap breaks</text>
             <text x={geo.shockX + 6} y={TOP + 19} className="t-mono" fontSize="9" fill="rgba(255,211,220,0.7)">15 JAN · 09:30</text>
+            {simulated && <text x={geo.shockX + 6} y={TOP + 34} className="t-caps" fontSize="9" fill="rgba(255,211,220,0.85)">SIMULATED AFTERMATH →</text>}
           </g>
         )}
         <path d={line("F")} fill="none" stroke={C.ice} strokeWidth="4" opacity="0.3" filter="url(#cTrail)" />

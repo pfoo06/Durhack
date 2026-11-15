@@ -22,7 +22,7 @@ from backend import config as C
 from backend.audio import countin, melody, modem
 from backend.audio.synth import Synth
 from backend.contracts import AdviserPacket, AdviserState, Bar, ClockPacket, Heard
-from backend.data import history_payload, load_bars, replay_range
+from backend.data import demo_bars, history_payload, load_bars, replay_range
 from backend.finance import Effectiveness, Hedger, PnL
 from backend.replay import Clock
 
@@ -122,8 +122,9 @@ class Mac:
     """One Mac's brain: clock → adviser → synth, packets in and out, UI messages (SPEC §4.7)."""
 
     def __init__(self, bars: list[Bar], channel: int, dial: float | None = None,
-                 adviser_cls: type = Adviser, modem_mode: str = C.DEFAULT_MODEM) -> None:
+                 adviser_cls: type = Adviser, modem_mode: str = C.DEFAULT_MODEM, simulated: bool = False) -> None:
         self.bars, self.channel = bars, channel
+        self.simulated = simulated  # --storm demo: the aftermath is made up; the UI says so
         self.modem = modem_mode  # MELODY: what we send, 'pilot' or 'melody'; UI-switchable
         self.slot_t0: float | None = None  # MELODY: when the replay began (count-in), the shared time base for turns
         self._slot_sent: dict[int, int] = {}
@@ -258,7 +259,8 @@ class Mac:
         bars = self.history["bars"]
         return {"type": "hello", "channel": self.channel,
                 "replayStart": bars[0]["time"], "replayEnd": bars[-1]["time"],
-                "shockTime": C.SHOCK_TIME.replace("Z", ":00Z"), "speeds": list(C.SPEED_BARS_PER_S), "chords": CHORDS}
+                "shockTime": C.SHOCK_TIME.replace("Z", ":00Z"), "speeds": list(C.SPEED_BARS_PER_S), "chords": CHORDS,
+                "simulated": self.simulated}
 
     def state_message(self) -> dict:
         s, bar = self.state, max(self.bar, self.first)
@@ -453,6 +455,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--smoke", action="store_true")
     p.add_argument("--modem", choices=("pilot", "melody"), default=C.DEFAULT_MODEM,
                    help="what to send first (default: the quiet melody; 'pilot' = high tones); switchable in the UI")
+    p.add_argument("--storm", choices=("real", "demo"), default="real",
+                   help="'demo': the real calm and crash, then a SIMULATED aftermath tuned to show the strategies "
+                        "splitting and converging in time (data.demo_bars). Every Mac in the room must use the same.")
     p.add_argument("--chord-gain-db", type=float, default=C.CHORD_GAIN_DB)
     p.add_argument("--pilot-gain-db", type=float, default=C.PILOT_GAIN_DB)
     p.add_argument("--input-device")
@@ -465,6 +470,9 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("backend/adviser.py not found: using a stand-in adviser that never moves its dial")
 
     bars = load_bars()
+    if a.storm == "demo":
+        bars = demo_bars(bars)
+        log.info("DEMO STORM: real calm and crash, simulated aftermath (every Mac must use --storm demo)")
     if a.smoke:
         if not a.loopback:
             p.error("--smoke needs --loopback")
@@ -484,7 +492,7 @@ def main(argv: list[str] | None = None) -> int:
             room.step(min(now - clock_state["last"], 0.2)); clock_state["last"] = now
         app = create_app(mac, body)
     else:
-        mac = Mac(bars, a.channel, a.dial, modem_mode=a.modem)
+        mac = Mac(bars, a.channel, a.dial, modem_mode=a.modem, simulated=a.storm == "demo")
         extra: list[StandInAdviser] = []
         if a.fake_neighbour is not None:
             nb = StandInAdviser((a.channel + 1) % 4, a.fake_neighbour)

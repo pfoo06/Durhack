@@ -57,3 +57,13 @@ MELODY_DECAY_MS = 35  # pluck decay time constant
 MELODY_SLOT_S = 1.4  # one Mac's turn: 11 notes (1.1 s) + guard
 MELODY_GAIN_DB = -12  # played like a chord, not like a hidden pilot
 MELODY_ALIGN_S = 0.1  # re-align our melody turns to the timing reference Mac's when more than this far off (§9.6)
+# Demo storm (--storm demo): the real calm and crash, then a SIMULATED aftermath in which the franc settles into a
+# new, stable relationship with the euro, so the strategies split clearly and then converge on a clean chord in time.
+DEMO_BETA = 0.8  # after the crash francs move about 0.8x as much as euros: the new hedge ratio to learn...
+DEMO_BETA_SWING = 0.3  # ...but it keeps shifting between DEMO_BETA ± this, so fast memory stays ahead until everyone follows
+DEMO_BETA_PERIOD_BARS = 24  # one full high-low cycle of those shifts
+DEMO_VOL0 = 0.005  # extra euro volatility per bar just after the crash (log return)
+DEMO_VOL_TAU_BARS = 40  # how fast that extra volatility dies away
+DEMO_VOL_MIN = 0.003  # euro volatility per bar once settled
+DEMO_NOISE = 0.05  # franc noise around the new relationship, as a fraction of the euro volatility
+DEMO_SEED = 0  # every Mac must build identical bars
