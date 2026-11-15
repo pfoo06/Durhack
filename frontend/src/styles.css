@@ -168,3 +168,8 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--moon); outl
 .mac-id { display: flex; align-items: baseline; gap: 10px; font-family: var(--serif, serif); font-size: 30px; color: var(--mac); margin-bottom: 4px; }
 .mac-id i { width: 14px; height: 14px; border-radius: 50%; background: var(--mac); box-shadow: 0 0 16px var(--mac); align-self: center; }
 .mac-mem { font-family: var(--sans); font-size: 13px; letter-spacing: 0.08em; color: var(--dim); }
+
+/* The leading Mac's own score line pulses so it stands out on its own screen */
+@keyframes lead-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.85; } }
+.lead-glow { animation: lead-pulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .lead-glow { animation: none; opacity: 0.6; } }
