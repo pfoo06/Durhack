@@ -92,7 +92,8 @@ def test_demo_storm_splits_soon_then_converges(monkeypatch) -> None:
             scores.append(e.update(b.rS, rH))
         split.append(sum(scores[shock + 10 : shock + 20]) / 10)
     assert split == sorted(split, reverse=True) and split[0] - split[-1] > 0.05
-    monkeypatch.setattr(C, "REPLAY_START", C.DEMO_REPLAY_START)  # as app.py sets it for --storm demo
+    monkeypatch.setattr(C, "REPLAY_START", C.DEMO_REPLAY_START)  # as app.py sets these for --storm demo
+    monkeypatch.setattr(C, "STEP_FRACTION", C.DEMO_STEP_FRACTION)
     first, _ = replay_range(bars)
     assert shock - first == 22  # the crash comes ~22 s into the replay
     fixed = sim.simulate(bars, 4, C.DEFAULT_SPEED_STEP, loss=None)
@@ -102,4 +103,4 @@ def test_demo_storm_splits_soon_then_converges(monkeypatch) -> None:
             s = sim.summarise(sim.simulate(bars, 4, C.DEFAULT_SPEED_STEP, loss=loss, seed=seed), fixed)
             assert s.calm_held
             on_fast += s.final_steps == [0, 0, 0, 0]
-    assert on_fast >= 5  # most rooms end on the fast strategy's chord (sim: 6/8)
+    assert on_fast >= 5  # most rooms end on the fast strategy's chord (sim: 6/8 at these losses)

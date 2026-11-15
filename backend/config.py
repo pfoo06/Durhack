@@ -58,12 +58,15 @@ MELODY_SLOT_S = 1.4  # one Mac's turn: 11 notes (1.1 s) + guard
 MELODY_GAIN_DB = -12  # played like a chord, not like a hidden pilot
 MELODY_ALIGN_S = 0.1  # re-align our melody turns to the timing reference Mac's when more than this far off (§9.6)
 # Demo storm (--storm demo): a fully SIMULATED replay, tuned so the strategies split soon after the crash and the
-# room then converges on the fast strategy well before the end (SPEC §5.5).
+# room then converges on the fast strategy in steps, about 40 s after the crash (SPEC §5.5).
 DEMO_REPLAY_START = "2015-01-13T12:00Z"  # demo replay starts later than REPLAY_START: the crash comes ~22 s in, not ~40 s
 DEMO_VOL = 0.005  # the franc's move per bar (log return), before and after the crash
 DEMO_CRASH_SIGMAS = 8  # the crash bar: the franc jumps this many DEMO_VOL...
 DEMO_CRASH_EURO = 0.5  # ...and the euro only this fraction as much, so the euro hedge fails
-DEMO_BETA_START = 0.3  # after the crash the franc follows the euro at this ratio, far from the calm 1.0...
-DEMO_BETA_END = 0.05  # ...drifting to this by the end, so the fast memory keeps an edge over the slow ones
+DEMO_BETA_LOW = 0.2  # after the crash the franc follows the euro at this ratio, far from the calm 1.0...
+DEMO_BETA_HIGH = 0.8  # ...then flips to this, then back, and so on: slow memories never catch up, so the fast one keeps its lead
+# (bars since the crash up to which this applies, bars between flips): slow flips first, faster later
+DEMO_FLIPS = ((20, 32), (40, 16), (10**9, 8))
 DEMO_NOISE = 0.05  # franc noise around the relationship, as a fraction of DEMO_VOL
-DEMO_SEED = 0  # every Mac must build identical bars; seed 0 converged on the fast chord most often in sim
+DEMO_SEED = 0  # every Mac must build identical bars
+DEMO_STEP_FRACTION = 0.3  # demo only: advisers step 30% (not STEP_FRACTION) towards the leader, so convergence is gradual
