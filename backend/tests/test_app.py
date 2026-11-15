@@ -20,7 +20,8 @@ def test_smoke(bars):
 def test_messages_match_protocol(bars):
     mac = app.Mac(bars, 1)
     hello = mac.hello()
-    assert set(hello) == {"type", "channel", "replayStart", "replayEnd", "shockTime", "speeds", "chords"}
+    assert set(hello) == {"type", "channel", "replayStart", "replayEnd", "shockTime", "speeds", "chords", "simulated"}
+    assert hello["simulated"] is False
     assert len(hello["speeds"]) == 8 and len(hello["chords"]) == 7
     hist = mac.history["bars"]
     assert hist[0]["S"] == pytest.approx(100.0) and hist[0]["time"] == hello["replayStart"]

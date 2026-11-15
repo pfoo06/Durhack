@@ -61,3 +61,37 @@ def test_history_payload_is_the_rebased_replay_window() -> None:
     assert rows[0]["S"] == pytest.approx(100.0) and rows[0]["F"] == pytest.approx(100.0)
     assert set(rows[0]) == {"i", "time", "S", "F", "rho"}
     assert max(r["S"] for r in rows) > 110  # the franc jumped against the pound in the storm
+
+
+
+def test_demo_storm_keeps_the_real_crash_and_is_repeatable() -> None:
+    from backend.data import demo_bars
+
+    real = load_bars(CSV)
+    demo, again = demo_bars(real), demo_bars(real)
+    shock = next(b.i for b in real if b.time <= SHOCK < b.time + timedelta(minutes=BAR_MINUTES))
+    assert demo[: shock + 1] == real[: shock + 1]  # the calm and the crash are real
+    assert demo == again  # every Mac builds identical bars
+    assert len(demo) == len(real) and [b.time for b in demo] == [b.time for b in real]
+    assert any(d.rS != r.rS for d, r in zip(demo[shock + 1 :], real[shock + 1 :]))
+
+
+def test_demo_storm_splits_then_converges() -> None:
+    """The point of the demo storm: right after the crash leaves the score window the four starting strategies
+    score clearly differently (fast best), and the room then converges on the fast one."""
+    from backend import config as C, sim
+    from backend.data import demo_bars
+    from backend.finance import Effectiveness, Hedger
+
+    bars = demo_bars(load_bars(CSV))
+    shock = next(b.i for b in bars if b.time <= SHOCK < b.time + timedelta(minutes=BAR_MINUTES))
+    split = []
+    for dial in C.START_DIALS:
+        h, e, scores = Hedger(C.H_MIN_BARS * 2**dial), Effectiveness(), []
+        for b in bars:
+            _, rH = h.update(b)
+            scores.append(e.update(b.rS, rH))
+        split.append(sum(scores[shock + 25 : shock + 37]) / 12)
+    assert split == sorted(split, reverse=True) and split[0] - split[-1] > 0.5
+    run = sim.simulate(bars, 4, C.DEFAULT_SPEED_STEP, loss=0.1, seed=0)
+    assert sim.summarise(run, sim.simulate(bars, 4, C.DEFAULT_SPEED_STEP, loss=None)).final_steps == [0, 0, 0, 0]

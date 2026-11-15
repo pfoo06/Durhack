@@ -11,6 +11,7 @@ export interface HelloMsg {
   shockTime: string;
   speeds: number[]; // bars per second for speed steps 0–7
   chords: string[]; // chord name per dial step 0–6
+  simulated?: boolean; // --storm demo: the aftermath after the crash is made up
 }
 
 export interface HistoryBar {

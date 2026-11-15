@@ -39,6 +39,7 @@ export default function App() {
           </div>
           <span className="caps brand">Storm Chorus</span>
           <span className="caps dim"> · channel {channel} · {clockText}</span>
+          {hello?.simulated && <span className="caps sim-tag"> · demo storm: simulated aftermath</span>}
         </div>
         <div className={`conn conn-${conn}`}><i />{conn === "open" ? "connected" : "disconnected"}</div>
       </header>
@@ -52,7 +53,7 @@ export default function App() {
           )}
         </div>
         <aside className="side">
-          {hello && <StormChart history={history} bar={chartBar} shockTime={hello.shockTime} trails={trails} channel={channel} />}
+          {hello && <StormChart history={history} bar={chartBar} shockTime={hello.shockTime} trails={trails} channel={channel} simulated={!!hello.simulated} />}
           {debug && (
             <label className="panel debug">
               <span className="caps">Preview score (debug only)</span>
