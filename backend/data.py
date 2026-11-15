@@ -11,7 +11,7 @@ import pandas as pd
 
 from backend import config
 from backend.config import (
-    BAR_MINUTES, DEMO_BETA_END, DEMO_BETA_START, DEMO_CRASH_EURO, DEMO_CRASH_SIGMAS, DEMO_NOISE, DEMO_SEED,
+    BAR_MINUTES, DEMO_BETA_HIGH, DEMO_BETA_LOW, DEMO_CRASH_EURO, DEMO_CRASH_SIGMAS, DEMO_NOISE, DEMO_FLIPS, DEMO_SEED,
     DEMO_VOL, RHO_WINDOW, SHOCK_TIME,
 )
 from backend.contracts import Bar
@@ -73,18 +73,18 @@ def demo_bars(bars: list[Bar]) -> list[Bar]:
     - Calm: the franc moves with the euro (rS ≈ rF), so every strategy hedges well.
     - Crash bar (the one containing SHOCK_TIME): the franc jumps DEMO_CRASH_SIGMAS × DEMO_VOL, the euro only
       DEMO_CRASH_EURO of that, so the euro hedge fails.
-    - Aftermath: the franc follows the euro at a ratio β far from the calm 1.0, drifting from DEMO_BETA_START
-      to DEMO_BETA_END. The franc keeps its usual size of moves, so the crash washes out of the score window
-      fast; the fast memory tracks β and slower ones lag, so the strategies split about 10 bars after the crash
-      and the room comes together on the fast one's chord within about 20 bars of it.
+    - Aftermath: the franc follows the euro at a ratio β far from the calm 1.0, flipping between DEMO_BETA_LOW
+      and DEMO_BETA_HIGH on the DEMO_FLIPS schedule. The franc keeps its usual size of moves, so the crash
+      washes out of the score window fast; the fast memory re-learns each flip and slower ones never catch up,
+      so the fast one keeps its lead while the others step towards it (DEMO_STEP_FRACTION).
     Seeded (DEMO_SEED), so every Mac builds identical bars.
     """
     shock_t = _utc(SHOCK_TIME)
     bar_len = pd.Timedelta(minutes=BAR_MINUTES).to_pytimedelta()
     shock = next(b.i for b in bars if b.time <= shock_t < b.time + bar_len)
-    last = max(b.i for b in bars if b.time <= _utc(config.REPLAY_END))
     rng = np.random.default_rng(DEMO_SEED)
     S, F = bars[0].S, bars[0].F
+    beta, since_flip = DEMO_BETA_LOW, 0
     out = []
     for b in bars:
         k = b.i - shock
@@ -95,7 +95,10 @@ def demo_bars(bars: list[Bar]) -> list[Bar]:
             rS = DEMO_CRASH_SIGMAS * DEMO_VOL
             rF = DEMO_CRASH_EURO * rS
         else:
-            beta = DEMO_BETA_START + (DEMO_BETA_END - DEMO_BETA_START) * min(1.0, (k - 1) / max(1, last - shock))
+            since_flip += 1
+            if since_flip >= next(every for until, every in DEMO_FLIPS if k <= until):
+                beta = DEMO_BETA_HIGH if beta == DEMO_BETA_LOW else DEMO_BETA_LOW
+                since_flip = 0
             rF = float(rng.normal(0.0, DEMO_VOL / beta))  # the franc's moves keep their usual size
             rS = beta * rF + float(rng.normal(0.0, DEMO_NOISE * DEMO_VOL))
         if out:
