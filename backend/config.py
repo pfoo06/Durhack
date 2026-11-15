@@ -19,7 +19,7 @@ EXPLORE_PROB = 0.1  # chance per decision that a struggling adviser with nobody 
 EXPLORE_STEP = 0.3  # size of that try; under STEP_HYSTERESIS (0.6), so it doesn't change the chord on its own
 EXPLORE_BELOW = 0.8  # only explore while own score is under this, so the calm harmony is untouched
 BLACKLIST_S = 10.0
-LOST_AFTER_S = 10.0
+LOST_AFTER_S = 12.0  # > 2 melody turns (2 × 4 × MELODY_SLOT_S = 11.2 s): a clock turn mustn't make a healthy peer look lost
 DEFAULT_MODEM = "melody"  # what a Mac sends unless told otherwise: the quiet melody, not the high pilot tones
 CLOCK_EVERY = 3  # late join (#35): every 3rd packet a running Mac sends is its replay position (a clock packet)
 RESYNC_BARS = 2  # a Mac re-syncs only when it is more than this many bars away from the room
@@ -56,3 +56,4 @@ MELODY_SOUND_MS = 80  # audible part of a note; the rest is silence
 MELODY_DECAY_MS = 35  # pluck decay time constant
 MELODY_SLOT_S = 1.4  # one Mac's turn: 11 notes (1.1 s) + guard
 MELODY_GAIN_DB = -12  # played like a chord, not like a hidden pilot
+MELODY_ALIGN_S = 0.1  # re-align our melody turns to the timing reference Mac's when more than this far off (§9.6)
