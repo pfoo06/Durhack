@@ -496,14 +496,13 @@ Run it as `python scripts/prepare_data.py data/raw/ data/chf2015.csv`. It MUST:
 For the demo only. On the real data, every strategy scores about 0 for four trading days after the crash, so the split and convergence happen late. `--storm demo` replaces **every bar** with a seeded simulation on the real timestamps, and starts the replay at `DEMO_REPLAY_START` (13 Jan 12:00) instead of `REPLAY_START`, so the crash comes about 22 s in. With `k` = bars since the crash bar:
 - calm (`k < 0`): `rF ~ N(0, DEMO_VOL)`, `rS = rF + N(0, DEMO_NOISE·DEMO_VOL)`, so every strategy hedges well;
 - crash (`k = 0`): `rS = DEMO_CRASH_SIGMAS·DEMO_VOL`, `rF = DEMO_CRASH_EURO·rS`, so the euro hedge fails;
-- aftermath (`k > 0`): `rS = β·rF + N(0, DEMO_NOISE·DEMO_VOL)` with `rF ~ N(0, DEMO_VOL/β)`, and β flipping between `DEMO_BETA_LOW` and `DEMO_BETA_HIGH` on the `DEMO_FLIPS` schedule (every 32 bars, then 16, then 8). The fast-memory strategy re-learns each flip and the slower ones never catch up, so the fast one keeps its lead while the others step towards it.
+- aftermath (`k > 0`): `rS = β·rF + N(0, DEMO_NOISE·DEMO_VOL)` with `rF ~ N(0, DEMO_VOL/β)`, and β drifting from `DEMO_BETA_START` to `DEMO_BETA_END` by `REPLAY_END`. The fast-memory strategy tracks β and the slower ones lag, so the fast one leads and the others follow it.
 
-The generator is seeded (`DEMO_SEED`), so every Mac builds identical bars. `hello.simulated` is true; the page looks the same as with real data, so the presenter says the market is simulated. Every Mac in a room must use the same `--storm`. The adviser rules are the same except `STEP_FRACTION`, which demo mode sets to `DEMO_STEP_FRACTION` (0.3) so the others reach the leader in several visible steps.
+The generator is seeded (`DEMO_SEED`), so every Mac builds identical bars. `hello.simulated` is true; the page looks the same as with real data, so the presenter says the market is simulated. Every Mac in a room must use the same `--storm`. Adviser rules are unchanged.
 
-Tuned results (sim, 4 advisers, 10%, 30% and 45% loss, room seeds 0–3; replay bar = seconds at the default speed):
+Tuned results (sim, 4 advisers, 10% and 45% loss, room seeds 0–3; replay bar = seconds at the default speed):
 - **Split:** the slow strategies start following at about bar 33 (shock + 11).
-- **Convergence:** the room is on one chord by about bar 64–72 (shock + 42–50) in 9/12 runs, all on the fast strategy's chord (step 0). In the other 3 the Macs end a chord apart.
-- **End score:** about 0.6, because the market keeps flipping to the end.
+- **Convergence:** the room is on one chord by about bar 40–42 (shock + 18–20) in 6/8 runs; all on the fast strategy's chord (step 0) in 6/8, ending at about 0.98. Otherwise: one run converges on step 2 (about 0.88), one ends with a Mac one chord off.
 
 ## 6. Finance engine
 

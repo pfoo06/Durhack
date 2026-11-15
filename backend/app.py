@@ -475,7 +475,6 @@ def main(argv: list[str] | None = None) -> int:
     if a.storm == "demo":
         bars = demo_bars(bars)
         C.REPLAY_START = C.DEMO_REPLAY_START  # shorter calm before the crash (SPEC §5.5)
-        C.STEP_FRACTION = C.DEMO_STEP_FRACTION  # smaller steps towards the leader: gradual convergence
         log.info("DEMO STORM: simulated market, shorter calm (every Mac must use --storm demo)")
     if a.smoke:
         if not a.loopback:
