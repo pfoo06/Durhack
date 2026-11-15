@@ -25,6 +25,8 @@ export default function App() {
   const clockText = state?.clock === "free" ? "running" : "waiting for count-in";
   const channel = hello?.channel ?? a?.channel ?? 0;
   const color = macColor(channel);
+  // This Mac has the best-scoring strategy among those it hears (alone, it isn't "leading" anything).
+  const leading = !!a && a.leaderChannel === a.channel && a.heard > 0;
 
   return (
     <div className="app" style={{ ["--mac" as string]: color }}>
@@ -52,7 +54,7 @@ export default function App() {
           )}
         </div>
         <aside className="side">
-          {hello && <StormChart history={history} bar={chartBar} shockTime={hello.shockTime} trails={trails} channel={channel} />}
+          {hello && <StormChart history={history} bar={chartBar} shockTime={hello.shockTime} trails={trails} channel={channel} leading={leading} />}
           {debug && (
             <label className="panel debug">
               <span className="caps">Preview score (debug only)</span>

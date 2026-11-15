@@ -8,11 +8,12 @@ import type { Trails } from "../useStorm";
  * this Mac's hedge score E (bold, its colour) against the scores of the Macs it hears (thin, their colours).
  * Only bars up to `bar` are drawn — the chart never reveals the future (SPEC §10.1).
  */
-const W = 440, TOP = 16, PRICE_H = 200, RHO_TOP = 250, RHO_H = 64, SC_TOP = 334, SC_H = 90, H = 450;
+// Every label sits in a strip ABOVE its panel, never over the lines (the franc line runs high after the crash).
+const W = 440, TOP = 40, PRICE_H = 200, RHO_TOP = 274, RHO_H = 64, SC_TOP = 372, SC_H = 90, H = 488;
 
-interface Props { history: HistoryBar[]; bar: number; shockTime: string; trails: Trails; channel: number }
+interface Props { history: HistoryBar[]; bar: number; shockTime: string; trails: Trails; channel: number; leading?: boolean }
 
-export function StormChart({ history, bar, shockTime, trails, channel }: Props) {
+export function StormChart({ history, bar, shockTime, trails, channel, leading = false }: Props) {
   const geo = useMemo(() => {
     if (history.length < 2) return null;
     const i0 = history[0].i, i1 = history[history.length - 1].i;
@@ -70,9 +71,9 @@ export function StormChart({ history, bar, shockTime, trails, channel }: Props) 
         ))}
         {geo.shockX !== null && (
           <g>
-            <line x1={geo.shockX} x2={geo.shockX} y1={TOP - 6} y2={SC_TOP + SC_H} stroke={C.flareSoft} strokeDasharray="2 3" opacity="0.75" />
-            <text x={geo.shockX + 6} y={TOP + 4} className="t-serif" fontSize="15" fill="#ffd3dc">the cap breaks</text>
-            <text x={geo.shockX + 6} y={TOP + 19} className="t-mono" fontSize="9" fill="rgba(255,211,220,0.7)">15 JAN · 09:30</text>
+            <line x1={geo.shockX} x2={geo.shockX} y1={6} y2={SC_TOP + SC_H} stroke={C.flareSoft} strokeDasharray="2 3" opacity="0.75" />
+            <text x={geo.shockX + 6} y={16} className="t-serif" fontSize="15" fill="#ffd3dc">the cap breaks</text>
+            <text x={geo.shockX + 6} y={29} className="t-mono" fontSize="9" fill="rgba(255,211,220,0.7)">15 JAN · 09:30</text>
           </g>
         )}
         <path d={line("F")} fill="none" stroke={C.ice} strokeWidth="4" opacity="0.3" filter="url(#cTrail)" />
@@ -86,21 +87,30 @@ export function StormChart({ history, bar, shockTime, trails, channel }: Props) 
         <text x="-6" y={geo.yr(0) + 3} textAnchor="end" className="t-mono" fontSize="8" fill="rgba(201,195,255,0.5)">0</text>
         <text x="-6" y={geo.yr(-1)} textAnchor="end" className="t-mono" fontSize="8" fill="rgba(201,195,255,0.5)">−1</text>
         <path d={rhoLine} fill="none" stroke={C.ice} strokeWidth="1.3" opacity="0.9" />
-        <text x="6" y={RHO_TOP + 13} className="t-caps" fontSize="8" fill="rgba(168,236,255,0.65)">CORRELATION ρ</text>
+        <text x="0" y={RHO_TOP - 7} className="t-caps" fontSize="8" fill="rgba(168,236,255,0.65)">CORRELATION ρ</text>
 
         <rect x="0" y={SC_TOP} width={W} height={SC_H} rx="6" fill="rgba(0,0,0,0.2)" />
         <text x="-6" y={ys(1) + 6} textAnchor="end" className="t-mono" fontSize="8" fill="rgba(201,195,255,0.5)">1</text>
         <text x="-6" y={ys(0)} textAnchor="end" className="t-mono" fontSize="8" fill="rgba(201,195,255,0.5)">0</text>
-        <text x="6" y={SC_TOP + 13} className="t-caps" fontSize="8" fill="rgba(243,227,195,0.7)">HEDGE SCORE E · THE RACE</text>
+        <text x="0" y={SC_TOP - 7} className="t-caps" fontSize="8" fill="rgba(243,227,195,0.7)">HEDGE SCORE E · THE RACE</text>
+        {leading && ownNow !== undefined && (
+          <text x={W} y={SC_TOP - 7} textAnchor="end" className="t-caps" fontSize="9" fill={macColor(channel)}>★ THIS MAC IS LEADING</text>
+        )}
         {peerTrails.map(([ch, m]) => (
           <path key={ch} d={trail(m)} fill="none" stroke={macColor(ch)} strokeWidth="1.3" opacity="0.6" strokeDasharray="3 2" />
         ))}
-        <path d={trail(trails.own)} fill="none" stroke={macColor(channel)} strokeWidth="2.6" strokeLinejoin="round" />
-        {ownNow !== undefined && <circle cx={geo.x(Math.min(bar, geo.i1))} cy={ys(ownNow)} r="3.5" fill={macColor(channel)} />}
+        {leading && (
+          <path className="lead-glow" d={trail(trails.own)} fill="none" stroke={macColor(channel)} strokeWidth="9" strokeLinejoin="round" filter="url(#cTrail)" />
+        )}
+        <path d={trail(trails.own)} fill="none" stroke={macColor(channel)} strokeWidth={leading ? 3.4 : 2.6} strokeLinejoin="round" />
+        {ownNow !== undefined && (
+          <circle cx={geo.x(Math.min(bar, geo.i1))} cy={ys(ownNow)} r={leading ? 5 : 3.5} fill={macColor(channel)}
+            style={leading ? { filter: `drop-shadow(0 0 6px ${macColor(channel)})` } : undefined} />
+        )}
 
         {last && (
           <g>
-            <line x1={px} x2={px} y1={TOP - 6} y2={SC_TOP + SC_H} stroke="rgba(255,255,255,0.45)" />
+            <line x1={px} x2={px} y1={6} y2={SC_TOP + SC_H} stroke="rgba(255,255,255,0.45)" />
             <circle cx={px} cy={geo.y(last.S)} r="9" fill="#ff8fa6" opacity="0.35" filter="url(#cTrail)" />
             <circle cx={px} cy={geo.y(last.S)} r="3.5" fill="#ffffff" />
             <circle cx={px} cy={geo.y(last.F)} r="2.4" fill={C.ice} />
