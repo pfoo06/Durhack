@@ -9,10 +9,9 @@ from dataclasses import replace
 import numpy as np
 import pandas as pd
 
-from backend import config
 from backend.config import (
-    BAR_MINUTES, DEMO_BETA_HIGH, DEMO_BETA_LOW, DEMO_CRASH_EURO, DEMO_CRASH_SIGMAS, DEMO_NOISE, DEMO_FLIPS, DEMO_SEED,
-    DEMO_VOL, RHO_WINDOW, SHOCK_TIME,
+    BAR_MINUTES, DEMO_BETA, DEMO_BETA_PERIOD_BARS, DEMO_BETA_SWING, DEMO_NOISE, DEMO_SEED, DEMO_VOL0, DEMO_VOL_MIN, DEMO_VOL_TAU_BARS, REPLAY_END,
+    REPLAY_START, RHO_WINDOW, SHOCK_TIME,
 )
 from backend.contracts import Bar
 
@@ -42,7 +41,7 @@ def load_bars(path: str = "data/chf2015.csv") -> list[Bar]:
 
 def replay_range(bars: list[Bar]) -> tuple[int, int]:
     """(first bar index with time ≥ REPLAY_START, last bar index with time ≤ REPLAY_END)."""
-    start, end = _utc(config.REPLAY_START), _utc(config.REPLAY_END)  # read now: --storm demo moves the start
+    start, end = _utc(REPLAY_START), _utc(REPLAY_END)
     first = next(b.i for b in bars if b.time >= start)
     last = max(b.i for b in bars if b.time <= end)
     return first, last
@@ -68,44 +67,29 @@ def history_payload(bars: list[Bar]) -> dict:
 
 
 def demo_bars(bars: list[Bar]) -> list[Bar]:
-    """The demo storm (--storm demo): a fully SIMULATED replay on the real timestamps (SPEC §5.5).
+    """The demo storm (--storm demo): the real bars up to and including the crash, then a SIMULATED aftermath.
 
-    - Calm: the franc moves with the euro (rS ≈ rF), so every strategy hedges well.
-    - Crash bar (the one containing SHOCK_TIME): the franc jumps DEMO_CRASH_SIGMAS × DEMO_VOL, the euro only
-      DEMO_CRASH_EURO of that, so the euro hedge fails.
-    - Aftermath: the franc follows the euro at a ratio β far from the calm 1.0, flipping between DEMO_BETA_LOW
-      and DEMO_BETA_HIGH on the DEMO_FLIPS schedule. The franc keeps its usual size of moves, so the crash
-      washes out of the score window fast; the fast memory re-learns each flip and slower ones never catch up,
-      so the fast one keeps its lead while the others step towards it (DEMO_STEP_FRACTION).
-    Seeded (DEMO_SEED), so every Mac builds identical bars.
+    After the crash the franc follows the euro again at a new ratio (rS = β·rF plus a little noise), on euro
+    volatility that starts high and dies away. β keeps shifting between DEMO_BETA ± DEMO_BETA_SWING every half
+    DEMO_BETA_PERIOD_BARS: the fast-memory strategy re-learns each shift within a bar or two and the slower ones
+    always lag, so the strategies split clearly and the others keep a reason to follow the fast one until they
+    all play its chord and score like it.
+    Deterministic (DEMO_SEED), so every Mac builds identical bars. Times and indexes are the real ones.
     """
     shock_t = _utc(SHOCK_TIME)
     bar_len = pd.Timedelta(minutes=BAR_MINUTES).to_pytimedelta()
     shock = next(b.i for b in bars if b.time <= shock_t < b.time + bar_len)
     rng = np.random.default_rng(DEMO_SEED)
-    S, F = bars[0].S, bars[0].F
-    beta, since_flip = DEMO_BETA_LOW, 0
-    out = []
-    for b in bars:
-        k = b.i - shock
-        if k < 0:
-            rF = float(rng.normal(0.0, DEMO_VOL))
-            rS = rF + float(rng.normal(0.0, DEMO_NOISE * DEMO_VOL))
-        elif k == 0:
-            rS = DEMO_CRASH_SIGMAS * DEMO_VOL
-            rF = DEMO_CRASH_EURO * rS
-        else:
-            since_flip += 1
-            if since_flip >= next(every for until, every in DEMO_FLIPS if k <= until):
-                beta = DEMO_BETA_HIGH if beta == DEMO_BETA_LOW else DEMO_BETA_LOW
-                since_flip = 0
-            rF = float(rng.normal(0.0, DEMO_VOL / beta))  # the franc's moves keep their usual size
-            rS = beta * rF + float(rng.normal(0.0, DEMO_NOISE * DEMO_VOL))
-        if out:
-            S, F = S * np.exp(rS), F * np.exp(rF)
-        else:
-            rS = rF = 0.0  # row 0 has no return (§5.2)
+    out = list(bars[: shock + 1])
+    S, F = bars[shock].S, bars[shock].F
+    after = bars[shock + 1 :]
+    for k, b in enumerate(after):
+        vol = DEMO_VOL0 * np.exp(-k / DEMO_VOL_TAU_BARS) + DEMO_VOL_MIN
+        beta = DEMO_BETA + (DEMO_BETA_SWING if (k // (DEMO_BETA_PERIOD_BARS // 2)) % 2 == 0 else -DEMO_BETA_SWING)
+        rF = float(rng.normal(0.0, vol))
+        rS = float(beta * rF + rng.normal(0.0, DEMO_NOISE * vol))
+        S, F = S * np.exp(rS), F * np.exp(rF)
         out.append(replace(b, S=S, F=F, eurchf=F / S, rS=rS, rF=rF))
     rs = pd.Series([b.rS for b in out]); rf = pd.Series([b.rF for b in out])
     rho = rs.rolling(RHO_WINDOW).corr(rf).fillna(0.0)
-    return [replace(b, rho=float(r)) for b, r in zip(out, rho)]
+    return [replace(b, rho=float(r)) if b.i > shock else b for b, r in zip(out, rho)]

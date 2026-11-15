@@ -493,17 +493,16 @@ Run it as `python scripts/prepare_data.py data/raw/ data/chf2015.csv`. It MUST:
 ---
 
 ### 5.5 Demo storm (`--storm demo`, `data.demo_bars`)
-For the demo only. On the real data, every strategy scores about 0 for four trading days after the crash, so the split and convergence happen late. `--storm demo` replaces **every bar** with a seeded simulation on the real timestamps, and starts the replay at `DEMO_REPLAY_START` (13 Jan 12:00) instead of `REPLAY_START`, so the crash comes about 22 s in. With `k` = bars since the crash bar:
-- calm (`k < 0`): `rF ~ N(0, DEMO_VOL)`, `rS = rF + N(0, DEMO_NOISE·DEMO_VOL)`, so every strategy hedges well;
-- crash (`k = 0`): `rS = DEMO_CRASH_SIGMAS·DEMO_VOL`, `rF = DEMO_CRASH_EURO·rS`, so the euro hedge fails;
-- aftermath (`k > 0`): `rS = β·rF + N(0, DEMO_NOISE·DEMO_VOL)` with `rF ~ N(0, DEMO_VOL/β)`, and β flipping between `DEMO_BETA_LOW` and `DEMO_BETA_HIGH` on the `DEMO_FLIPS` schedule (every 32 bars, then 16, then 8). The fast-memory strategy re-learns each flip and the slower ones never catch up, so the fast one keeps its lead while the others step towards it.
+For the demo only. On the real data, every strategy scores about 0 for four trading days after the crash and the best only recovers to about 0.6, so the split and convergence happen late and the ending stays tense. `--storm demo` keeps **the real bars up to and including the crash**, then replaces the aftermath with simulated returns:
+- euro: `rF ~ N(0, vol)`, with `vol = DEMO_VOL0·e^(−k / DEMO_VOL_TAU_BARS) + DEMO_VOL_MIN`;
+- franc: `rS = β·rF + N(0, DEMO_NOISE·vol)`, where β alternates between `DEMO_BETA ± DEMO_BETA_SWING` every half `DEMO_BETA_PERIOD_BARS`. The fast-memory strategy re-learns each shift within a bar or two and the slower ones lag, so the fast one stays ahead until everyone follows it.
 
-The generator is seeded (`DEMO_SEED`), so every Mac builds identical bars. `hello.simulated` is true; the page looks the same as with real data, so the presenter says the market is simulated. Every Mac in a room must use the same `--storm`. The adviser rules are the same except `STEP_FRACTION`, which demo mode sets to `DEMO_STEP_FRACTION` (0.3) so the others reach the leader in several visible steps.
+Times and indexes are the real ones, and the generator is seeded (`DEMO_SEED`), so every Mac builds identical bars. `hello.simulated` is true; the page looks the same as with real data, so the presenter says the aftermath is simulated. Every Mac in a room must use the same `--storm`.
 
-Tuned results (sim, 4 advisers, 10%, 30% and 45% loss, room seeds 0–3; replay bar = seconds at the default speed):
-- **Split:** the slow strategies start following at about bar 33 (shock + 11).
-- **Convergence:** the room is on one chord by about bar 64–72 (shock + 42–50) in 9/12 runs, all on the fast strategy's chord (step 0). In the other 3 the Macs end a chord apart.
-- **End score:** about 0.6, because the market keeps flipping to the end.
+Tuned results (`--storm demo`, real calm and crash):
+- **Split:** mean score from shock + 25 to shock + 36, for dials 0/3/4/5, is 0.87 / 0.50 / 0.33 / 0.21.
+- **Convergence:** all four end on step 0 in 8/8 simulated runs at 10% and 45% loss, with the fast strategy at about 0.92.
+- **Two-Mac `LoopbackRoom` (melody):** split at about 1:10 (0.77 vs 0.20), converged by about 1:40, both at about 0.92.
 
 ## 6. Finance engine
 

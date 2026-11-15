@@ -458,7 +458,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--modem", choices=("pilot", "melody"), default=C.DEFAULT_MODEM,
                    help="what to send first (default: the quiet melody; 'pilot' = high tones); switchable in the UI")
     p.add_argument("--storm", choices=("real", "demo"), default="real",
-                   help="'demo': a SIMULATED market with a shorter calm, tuned to show the strategies "
+                   help="'demo': the real calm and crash, then a SIMULATED aftermath tuned to show the strategies "
                         "splitting and converging in time (data.demo_bars). Every Mac in the room must use the same.")
     p.add_argument("--chord-gain-db", type=float, default=C.CHORD_GAIN_DB)
     p.add_argument("--pilot-gain-db", type=float, default=C.PILOT_GAIN_DB)
@@ -474,9 +474,7 @@ def main(argv: list[str] | None = None) -> int:
     bars = load_bars()
     if a.storm == "demo":
         bars = demo_bars(bars)
-        C.REPLAY_START = C.DEMO_REPLAY_START  # shorter calm before the crash (SPEC §5.5)
-        C.STEP_FRACTION = C.DEMO_STEP_FRACTION  # smaller steps towards the leader: gradual convergence
-        log.info("DEMO STORM: simulated market, shorter calm (every Mac must use --storm demo)")
+        log.info("DEMO STORM: real calm and crash, simulated aftermath (every Mac must use --storm demo)")
     if a.smoke:
         if not a.loopback:
             p.error("--smoke needs --loopback")
